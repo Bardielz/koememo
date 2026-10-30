@@ -1,0 +1,95 @@
+name: Android build and test
+
+on:
+  push:
+    branches: [main]
+    tags: ['v*']
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: android-${{ github.ref }}
+  cancel-in-progress: ${{ !startsWith(github.ref, 'refs/tags/') }}
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-java@b843ebf9b913146b38da2eaa7aeddf76074ae1ad # v6.1.0
+        with:
+          distribution: temurin
+          java-version: '17'
+          cache: gradle
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: '3.13'
+      - uses: android-actions/setup-android@be39fa834029ff78f1a44aa3bb0819b8fc2bd8fd # v4.0.4
+      - name: Install Android SDK
+        run: sdkmanager 'platforms;android-35' 'build-tools;35.0.0'
+      - name: Test export and audio validation
+        run: python3 -m unittest discover -s scripts -p 'test_*.py' -v
+      - name: Build APK, unit tests and Android Lint
+        run: ./gradlew --no-daemon assembleDebug testDebugUnitTest lintDebug --console=plain
+      - name: Prepare CI APK and checksums
+        run: python3 scripts/package-ci.py
+      - name: Upload CI APK
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: koememo-ci-debug
+          path: dist/
+          if-no-files-found: error
+          retention-days: 14
+      - name: Upload test and lint reports
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: verification-reports
+          path: |
+            app/build/reports/
+            app/build/test-results/
+          if-no-files-found: ignore
+          retention-days: 14
+
+  prerelease:
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: koememo-ci-debug
+          path: dist
+      - name: Publish tagged test build
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: |
+          cat > notes.md <<'NOTES'
+          自动构建测试版，已通过 Kotlin/Python 单元测试与 Android Lint。
+
+          `ci-debug.apk` 使用本次 CI 运行生成的临时 debug 签名，不能保证覆盖已安装版本。遇到签名冲突请先导出录音，不要直接卸载。SHA-256 文件用于下载完整性校验。
+
+          本次工作流不包含麦克风、扬声器或电池续航实机测试。
+          NOTES
+          if ! gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
+            gh release create "$RELEASE_TAG" --verify-tag --prerelease --title "KoeMemo $RELEASE_TAG (test build)" --notes-file notes.md
+          fi
+          # Keep published assets immutable: reruns reuse existing names, never clobber.
+          gh release view "$RELEASE_TAG" --json assets --jq '.assets[].name' > existing-assets.txt
+          for asset in dist/*; do
+            if ! grep -Fxq "$(basename "$asset")" existing-assets.txt; then
+              gh release upload "$RELEASE_TAG" "$asset"
+            fi
+          done

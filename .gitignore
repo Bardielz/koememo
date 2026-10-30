@@ -27,3 +27,6 @@ validation/
 *.tar
 *.zip
 *.log
+
+# CI package output
+dist/
