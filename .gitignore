@@ -1,0 +1,28 @@
+# Local configuration and build output
+.gradle/
+**/build/
+.idea/
+local.properties
+.DS_Store
+__pycache__/
+*.py[cod]
+.env
+.env.*
+*.keystore
+*.jks
+*.apk
+*.aab
+
+# Private recordings, exports and device evidence
+recordings/
+exports/
+test-runs/
+validation/
+*.aac
+*.ogg
+*.wav
+*.m4a
+*.mp3
+*.tar
+*.zip
+*.log
