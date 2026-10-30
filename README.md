@@ -44,13 +44,13 @@ Kotlin 原生 Wear OS 本地录音应用，面向 Galaxy Watch5 等手表。支�
 git clone https://github.com/Bardielz/koememo.git
 cd koememo
 # 设置 JAVA_HOME 与 ANDROID_HOME，或用 Android Studio 配置 SDK。
-./gradlew assembleDebug testDebugUnitTest lintDebug
-python3 -m unittest discover -s scripts -p 'test_*.py' -v
+apps/watch/wearos/gradlew -p apps/watch/wearos assembleDebug testDebugUnitTest :recording:domain:test :recording:application:test lintDebug
+python3 -m unittest discover -s tools/audio -p 'test_*.py' -v
 ```
 
-APK 输出：`app/build/outputs/apk/debug/app-debug.apk`。Python 工具仅使用标准库，建议 Python 3.10 或更新版本。首次构建需要访问 Google Maven、Maven Central 和 Gradle 分发服务。
+APK 输出：`apps/watch/wearos/app/build/outputs/apk/debug/app-debug.apk`。Python 工具仅使用标准库，建议 Python 3.10 或更新版本。首次构建需要访问 Google Maven、Maven Central 和 Gradle 分发服务。
 
-`scripts/build-local.sh` 是原开发工作区的可选构建辅助脚本，使用邻近的 `work/toolchain` 目录和 IntelliJ JBR，通过仅监听回环地址的 curl 缓存下载依赖。普通克隆环境请优先使用 Gradle Wrapper，不依赖这套本地目录布局。
+`tools/build/build-local.sh` 是原开发工作区的可选构建辅助脚本，使用邻近的 `work/toolchain` 目录和 IntelliJ JBR，通过仅监听回环地址的 curl 缓存下载依赖。普通克隆环境请优先使用 Gradle Wrapper，不依赖这套本地目录布局。
 
 ## 安装与使用
 
@@ -61,7 +61,7 @@ APK 输出：`app/build/outputs/apk/debug/app-debug.apk`。Python 工具仅使�
 ```sh
 adb pair WATCH_IP:PAIRING_PORT
 adb connect WATCH_IP:CONNECTION_PORT
-adb -s WATCH_IP:CONNECTION_PORT install -r app/build/outputs/apk/debug/app-debug.apk
+adb -s WATCH_IP:CONNECTION_PORT install -r apps/watch/wearos/app/build/outputs/apk/debug/app-debug.apk
 ```
 
 配对端口与连接端口通常不同，且可能变化。打开 KoeMemo，允许麦克风与通知权限，点击开始。正式续航对比时关闭无线调试。
@@ -75,9 +75,9 @@ adb -s WATCH_IP:CONNECTION_PORT install -r app/build/outputs/apk/debug/app-debug
 先暂停或结束，等待保存完成，再通过已授权的 ADB 导出到一个尚不存在的目录：
 
 ```sh
-python3 scripts/export.py /path/to/new-export --serial WATCH_IP:CONNECTION_PORT
+python3 tools/audio/export.py /path/to/new-export --serial WATCH_IP:CONNECTION_PORT
 # adb 不在 PATH 时加 --adb /path/to/platform-tools/adb
-python3 scripts/audit.py /path/to/new-export/files/recordings
+python3 tools/audio/audit.py /path/to/new-export/files/recordings
 ```
 
 导出使用 debug 应用的 `run-as` 权限，保留手表原件。输出包含音频、`events.jsonl`、原始归档和 `audit.json`。退出码 0 表示结构与已保存哈希检查无异常，2 表示存在错误或警告。
@@ -99,11 +99,27 @@ Activity → 麦克风前台服务 → AudioRecord → 系统 MediaCodec
 - Opus 试听使用连续包时间戳，避免提取器重复时间戳导致重复跳过预热音频；AAC 试听使用 MediaPlayer。
 - 音量每约 500 ms 抽查一批 PCM；静音与无帧监测每 5 秒，电量与空间每 30 秒，遥测日志每 60 秒。
 
-核心代码在 `app/src/main/java/dev/watchmemory/`：`RecordingService` 管理生命周期，`CaptureEngine` 管理采集与编码，`SegmentWriter` / `OpusSegmentWriter` 管理文件，`AppSettings` / `ExperimentPolicy` 管理实验开关。
+项目按客户端和平台组织：
+
+```text
+apps/
+  watch/wearos/       # Wear OS Gradle 工程
+    app/             # UI、Android 服务、音频与存储适配器
+    recording/
+      domain/        # 纯 Kotlin：会话、录音配置、安全规则
+      application/   # 纯 Kotlin：用例及存储、控制、播放端口
+  phone/             # 手机端预留，尚未实现
+  desktop/           # PC 端预留，尚未实现
+packages/contracts/  # 跨端协议预留，尚未实现
+tools/              # 构建、音频校验与设备探针
+docs/               # 架构与变更记录
+```
+
+依赖方向为 `app → application → domain`。Android SDK、MediaCodec、文件和 SharedPreferences 留在 app 适配层；`bootstrap/AppGraph` 负责组装。保留原应用 ID 和 Android 组件入口。详见 [架构说明](docs/architecture.md)。
 
 ## 验证状态与限制
 
-0.1.4 已完成构建、Lint、14 项 Kotlin 单元测试及 8 项 Python 测试。Galaxy Watch5（Wear OS 6 / One UI 8 Watch）上，使用合成正弦波验证了 AAC 与 Opus 共 12 组采样率/码率配置，包含一秒切段和解码；24 个 Opus 片段通过结构及 CRC 检查。测试工具为 `scripts/probes/CodecProbe.java`，不打开麦克风。
+重构前的 0.1.4 已完成构建、Lint、14 项 Kotlin 单元测试及 8 项 Python 测试。Galaxy Watch5（Wear OS 6 / One UI 8 Watch）上，使用合成正弦波验证了 AAC 与 Opus 共 12 组采样率/码率配置，包含一秒切段和解码；24 个 Opus 片段通过结构及 CRC 检查。测试工具为 `tools/probes/CodecProbe.java`，不打开麦克风。
 
 这些测试不代表所有设备可用，也不证明新版麦克风录音、扬声器试听或全天续航均已验收。早期版本的长时运行包含充电时段，不能作为单次充电 24 小时续航证据。尚未完成当前各配置的耗电对照，不承诺 Opus 或更低码率一定更省电。
 
@@ -125,6 +141,6 @@ Activity → 麦克风前台服务 → AudioRecord → 系统 MediaCodec
 
 ## 开发记录
 
-见 [CHANGELOG.md](CHANGELOG.md)。Git 历史从当前 0.1.4 源码快照开始，按应用、工具、文档拆分导入；之前的版本演进以变更记录描述，不伪造历史提交。
+见 [变更记录](docs/CHANGELOG.md)。Git 历史从当前 0.1.4 源码快照开始，按应用、工具、文档拆分导入；之前的版本演进以变更记录描述，不伪造历史提交。
 
 参考：[AudioRecord](https://developer.android.com/reference/android/media/AudioRecord)、[Android 编码格式](https://developer.android.com/media/platform/supported-formats)、[麦克风前台服务](https://developer.android.com/develop/background-work/services/fgs/service-types)。

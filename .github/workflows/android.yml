@@ -35,11 +35,11 @@ jobs:
       - name: Install Android SDK
         run: sdkmanager 'platforms;android-35' 'build-tools;35.0.0'
       - name: Test export and audio validation
-        run: python3 -m unittest discover -s scripts -p 'test_*.py' -v
+        run: python3 -m unittest discover -s tools/audio -p 'test_*.py' -v
       - name: Build APK, unit tests and Android Lint
-        run: ./gradlew --no-daemon assembleDebug testDebugUnitTest lintDebug --console=plain
+        run: apps/watch/wearos/gradlew -p apps/watch/wearos --no-daemon assembleDebug testDebugUnitTest :recording:domain:test :recording:application:test lintDebug --console=plain
       - name: Prepare CI APK and checksums
-        run: python3 scripts/package-ci.py
+        run: python3 tools/build/package-ci.py
       - name: Upload CI APK
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
@@ -53,8 +53,8 @@ jobs:
         with:
           name: verification-reports
           path: |
-            app/build/reports/
-            app/build/test-results/
+            apps/watch/wearos/**/build/reports/
+            apps/watch/wearos/**/build/test-results/
           if-no-files-found: ignore
           retention-days: 14
 

@@ -2,6 +2,9 @@
 .gradle/
 .kotlin/
 **/build/
+# Build tooling is source, not generated Gradle output.
+!tools/build/
+!tools/build/**
 .idea/
 local.properties
 .DS_Store
