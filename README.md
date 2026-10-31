@@ -133,7 +133,7 @@ docs/               # 架构与变更记录
 
 ## 自动构建与发布
 
-[GitHub Actions](https://github.com/Bardielz/koememo/actions) 在推送 main、提交 PR、推送 `v*` 标签或手动触发时执行：Python 测试 → APK 构建 → Kotlin 单元测试 → Android Lint。成功后可下载 `koememo-ci-debug`，测试报告单独保存，保留 14 天。
+[GitHub Actions](https://github.com/Bardielz/koememo/actions) 在推送 master、提交 PR、推送 `v*` 标签或手动触发时执行：Python 测试 → APK 构建 → Kotlin 单元测试 → Android Lint。成功后可下载 `koememo-ci-debug`，测试报告单独保存，保留 14 天。
 
 推送与 `versionName` 一致的标签（例如 `v0.1.4`）会在检查通过后创建预发布 Release 并附上 CI APK 与校验信息；已有同名附件不会覆盖。普通分支构建不会发布 Release。工作流不上传 GitHub Packages，因为此项目交付的是手表安装包，而非 Maven 依赖库。
 
@@ -144,3 +144,7 @@ docs/               # 架构与变更记录
 见 [变更记录](docs/CHANGELOG.md)。Git 历史从当前 0.1.4 源码快照开始，按应用、工具、文档拆分导入；之前的版本演进以变更记录描述，不伪造历史提交。
 
 参考：[AudioRecord](https://developer.android.com/reference/android/media/AudioRecord)、[Android 编码格式](https://developer.android.com/media/platform/supported-formats)、[麦克风前台服务](https://developer.android.com/develop/background-work/services/fgs/service-types)。
+
+## 开发工作流
+
+所有后续特性从最新 `origin/master` 创建 `feature/<name>` 分支；修复使用 `fix/<name>`，维护使用 `chore/<name>`。通过 Git 提交、推送分支和 PR 合并到 `master`，不直接在主分支开发。具体步骤见 [贡献指南](CONTRIBUTING.md)。
