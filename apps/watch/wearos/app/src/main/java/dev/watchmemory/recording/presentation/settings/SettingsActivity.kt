@@ -61,6 +61,13 @@ open class SettingsActivity : Activity() {
             radio.setOnClickListener { change { settings.setSource(source) } }
         }
         if (settings.experimentsEnabled) {
+            column.addView(Switch(this).apply {
+                text = "性能诊断"; textSize = 14f
+                isChecked = settings.selectedDiagnostics
+                isEnabled = !graph.state.busy
+                setOnCheckedChangeListener { _, value -> change { settings.setDiagnostics(value) } }
+            })
+            label("诊断会增加开销，仅用于短时分析。续航测试请关闭；下次录音生效。")
             label("采样率")
             val rates = RadioGroup(this).apply { column.addView(this) }
             ExperimentPolicy.sampleRates.forEach { rate ->
