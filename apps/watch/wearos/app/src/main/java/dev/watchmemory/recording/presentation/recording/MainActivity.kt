@@ -81,7 +81,7 @@ open class MainActivity : Activity() {
         playback = button("试听最新片段") { playLatest() }
         settingsButton = button("设置") { startActivity(Intent(this, SettingsActivity::class.java)) }
         detail = label("", 11f, Color.LTGRAY).apply { setPadding(0, dp(10), 0, 0) }
-        label("本地录音测试版 · 0.1.4\n下滑查看操作\n录音不自动上传", 10f, Color.GRAY)
+        label("本地录音测试版 · ${packageManager.getPackageInfo(packageName, 0).versionName}\n下滑查看操作\n录音不自动上传", 10f, Color.GRAY)
     }
     private fun requestStart() {
         stopPlayback()

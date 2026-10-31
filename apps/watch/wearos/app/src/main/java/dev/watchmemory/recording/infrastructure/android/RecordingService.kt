@@ -17,6 +17,7 @@ import dev.watchmemory.recording.infrastructure.storage.*
 /** Android lifecycle adapter: foreground notification, wake lock, worker and timer ownership. */
 open class RecordingService : Service(), CaptureEngine.Observer {
     private val graph by lazy { AppGraph.get(this) }
+    private val batteryTelemetry by lazy { BatteryTelemetry(this) }
     private val runtime get() = graph.runtime
     private val sessions get() = graph.sessions
     private val handler = Handler(Looper.getMainLooper())
@@ -54,7 +55,7 @@ open class RecordingService : Service(), CaptureEngine.Observer {
                 if (stopReason == null) wakeLock?.acquire(180_000L)
                 log("telemetry", mapOf("battery_percent" to resourcesState.batteryPercent, "dbfs" to runtime.db,
                     "frames" to runtime.frames, "system_silenced" to runtime.muted, "free_bytes" to resourcesState.freeBytes,
-                    "thermal_status" to getSystemService(PowerManager::class.java).currentThermalStatus))
+                    "thermal_status" to getSystemService(PowerManager::class.java).currentThermalStatus) + batteryTelemetry.snapshot())
                 lastTelemetry = now
             }
             if (runtime.status != lastNotice) {
@@ -95,21 +96,36 @@ open class RecordingService : Service(), CaptureEngine.Observer {
             val config = graph.settings.configuration()
             resourcesState = readResources()
             RecordingSafety.stop(resourcesState)?.let { error(stopText(it)) }
+            val diagnosticEnabled = graph.settings.diagnosticsEnabled
+            val packageInfo = packageManager.getPackageInfo(packageName, 0)
             val plan = sessions.begin(config, mapOf("battery_percent" to resourcesState.batteryPercent,
                 "unprocessed_supported" to graph.settings.rawSupported, "model" to Build.MODEL,
-                "sdk" to Build.VERSION.SDK_INT, "abis" to Build.SUPPORTED_ABIS.joinToString()))
-            lastResources = 0; lastTelemetry = 0
+                "sdk" to Build.VERSION.SDK_INT, "abis" to Build.SUPPORTED_ABIS.joinToString(),
+                "app_version" to (packageInfo.versionName ?: "unknown"), "app_version_code" to packageInfo.longVersionCode,
+                "diagnostics_enabled" to diagnosticEnabled) + batteryTelemetry.snapshot())
+            lastResources = SystemClock.elapsedRealtime(); lastTelemetry = lastResources
             runtime.startedAt = SystemClock.elapsedRealtime(); runtime.lastFrameAt = runtime.startedAt
             lastLoudAt = runtime.startedAt; runtime.frames = 0; runtime.muted = false
             ending = false; stopReason = null; runtime.status = "正在启动录音"; runtime.busy = true
             wakeLock = getSystemService(PowerManager::class.java).newWakeLock(
                 PowerManager.PARTIAL_WAKE_LOCK, "watchmemory:recording").apply { setReferenceCounted(false); acquire(180_000L) }
-            val capture = CaptureEngine(this, config.source, config.sampleRate, config.encoding, config.bitrate)
+            val diagnostics = RecordingDiagnostics(diagnosticEnabled, AndroidDiagnosticClock, AndroidDiagnosticTrace)
+            fun reportDiagnostics(final: Boolean) {
+                if (diagnosticEnabled) sessions.recordEvent("performance", diagnostics.snapshot() + ("final" to final) + ("run" to plan.runId))
+            }
+            val capture = CaptureEngine(this, config.source, config.sampleRate, config.encoding, config.bitrate,
+                diagnostics, { reportDiagnostics(false) })
             engine = capture; handler.post(monitor)
             Thread({
                 var failure: String? = null
-                try { graph.writerFactory.create(plan).use { capture.record(it) } }
+                try {
+                    val writer = graph.writerFactory.create(plan)
+                    (if (diagnosticEnabled) DiagnosticRecordingWriter(writer, diagnostics) else writer).use { capture.record(it) }
+                }
                 catch (e: Exception) { failure = "录音异常：${e.message ?: e.javaClass.simpleName}" }
+                try { reportDiagnostics(true) } catch (e: Exception) {
+                    if (failure == null) failure = "诊断日志写入失败：${e.message}"
+                }
                 val result = failure; handler.post { complete(result) }
             }, "audio-capture").start()
         } catch (e: Exception) { complete("启动失败：${e.message ?: e.javaClass.simpleName}") }
@@ -124,7 +140,7 @@ open class RecordingService : Service(), CaptureEngine.Observer {
         var finalStatus = error ?: stopReason ?: "录音已停止"
         try {
             sessions.complete(finalStatus, mapOf("duration_ms" to (if (runtime.busy) SystemClock.elapsedRealtime() - runtime.startedAt else 0),
-                "frames" to runtime.frames, "battery_percent" to readResources().batteryPercent), error != null, ending)
+                "frames" to runtime.frames, "battery_percent" to readResources().batteryPercent) + batteryTelemetry.snapshot(), error != null, ending)
         } catch (e: Exception) { finalStatus = "保存状态失败：${e.message}" }
         finally {
             engine = null
