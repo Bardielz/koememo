@@ -12,6 +12,8 @@ import java.io.*
 class LibraryActivity : Activity() {
     companion object { private val transferring = java.util.concurrent.atomic.AtomicBoolean(false) }
     private lateinit var status: TextView
+    private lateinit var libraryHint: TextView
+    private var loadGeneration = 0
     private lateinit var list: ListView
     private var exporting: File? = null
     private lateinit var sync: Button
@@ -25,6 +27,8 @@ class LibraryActivity : Activity() {
         status = TextView(this); sync = Button(this).apply { text = "从手表同步"; setOnClickListener { startSync() } }
         layout.addView(sync); layout.addView(Button(this).apply { text = "暂停同步"; setOnClickListener { cancel() } })
         layout.addView(status)
+        libraryHint = TextView(this).apply { text = "正在读取本地录音…" }
+        layout.addView(libraryHint)
         exporting = state?.getString("exportFile")?.let(::File)
         list = ListView(this)
         layout.addView(list); setContentView(layout); refresh()
@@ -32,7 +36,17 @@ class LibraryActivity : Activity() {
     private fun cancel() { cancelled = true; active?.let { Wearable.getChannelClient(this).close(it) } }
     override fun onDestroy() { cancel(); player?.release(); super.onDestroy() }
     private fun refresh() {
-        val files = root.walkTopDown().filter { it.isFile && it.extension in setOf("aac","ogg") }.sortedByDescending { it.path }.toList()
+        val generation = ++loadGeneration
+        Thread {
+            val result = runCatching { root.walkTopDown().filter { it.isFile && it.extension in setOf("aac","ogg") }.sortedByDescending { it.path }.toList() }
+            runOnUiThread {
+                if (generation != loadGeneration || isFinishing || isDestroyed) return@runOnUiThread
+                result.onSuccess { showFiles(it) }.onFailure { libraryHint.text = "读取录音失败：" + it.javaClass.simpleName }
+            }
+        }.start()
+    }
+    private fun showFiles(files: List<File>) {
+        libraryHint.text = if (files.isEmpty()) "手机上还没有录音，点「从手表同步」开始。" else "本地录音（${files.size}）"
         list.adapter = ArrayAdapter(this, android.R.layout.simple_list_item_1, files.map { it.parentFile!!.name + "/" + it.name })
         list.setOnItemClickListener { _, _, index, _ ->
             val file = files[index]
