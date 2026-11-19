@@ -96,13 +96,15 @@ class SyncMetrics(context: Context, private val side: String, private val sessio
                     put("phase_thread_cpu_ns", JSONObject(cpuTimes.toMap()))
                 }
             }
+            val line = row.toString()
+            Log.i("KoeMemoMetrics", line)
             synchronized(fileLock) {
                 check(directory.isDirectory || directory.mkdirs())
                 val file = File(directory, "sync.jsonl")
                 if (file.length() >= 1024 * 1024) {
                     android.system.Os.rename(file.path, File(directory, "sync.previous.jsonl").path)
                 }
-                file.appendText(row.toString() + "\n")
+                file.appendText(line + "\n")
             }
         }.onFailure { Log.w("KoeMemoMetrics", "Failed to save $event sample", it) }
     }
