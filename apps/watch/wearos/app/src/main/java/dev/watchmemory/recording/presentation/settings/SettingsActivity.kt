@@ -61,6 +61,13 @@ open class SettingsActivity : Activity() {
             radio.setOnClickListener { change { settings.setSource(source) } }
         }
         if (settings.experimentsEnabled) {
+            column.addView(Switch(this).apply {
+                text = "性能与耗电统计"; textSize = 14f
+                isChecked = settings.selectedDiagnostics
+                isEnabled = !graph.state.busy
+                setOnCheckedChangeListener { _, value -> change { settings.setDiagnostics(value) } }
+            })
+            label("采集录音性能与同步耗电统计。下次录音或同步尝试生效。")
             label("采样率")
             val rates = RadioGroup(this).apply { column.addView(this) }
             ExperimentPolicy.sampleRates.forEach { rate ->
@@ -95,6 +102,7 @@ open class SettingsActivity : Activity() {
             label("关闭实验功能后使用 MIC / 16 kHz / AAC 48 kbps。开始时检查配置，不支持会报错。Opus 的播放时间基准为 48 kHz，与采集采样率分别记录。")
         }
         if (settings.experimentsEnabled) label("实验音源每次只启用一种。所有实验功能均受上方总开关控制。")
+        column.addView(Button(this).apply { text = "查看同步统计"; setOnClickListener { dev.koememo.telemetry.showSyncHistory(this@SettingsActivity) } })
         toggle.setOnCheckedChangeListener { _, enabled -> change { settings.setExperiments(enabled) } }
         column.addView(Button(this).apply { text = "返回"; setOnClickListener { finish() } })
     }
