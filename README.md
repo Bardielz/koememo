@@ -12,7 +12,7 @@ Kotlin 原生 Wear OS 本地录音应用，面向 Galaxy Watch5 等手表。支�
 - 文件关闭后记录 SHA-256；每 30 秒 flush + fsync，停止和切段时同步。
 - 记录电量、音量、系统静音、可用空间、温度状态及实际音频配置。
 - 电量低于 9%、空间不足 256 MiB 或超过 30 秒无编码数据时停止并保存。
-- 本地存储，不申请网络权限。尚无云同步、转写、摘要或手机配套应用。
+- 本地存储。配对安卓手机可通过 [手机端](apps/phone/README.md) 同步已保存片段并播放。
 
 ## 实验设置
 
@@ -108,9 +108,9 @@ apps/
     recording/
       domain/        # 纯 Kotlin：会话、录音配置、安全规则
       application/   # 纯 Kotlin：用例及存储、控制、播放端口
-  phone/             # 手机端预留，尚未实现
+  phone/             # 安卓手机接收、播放与导出
   desktop/           # PC 端预留，尚未实现
-packages/contracts/  # 跨端协议预留，尚未实现
+packages/contracts/  # 分段元数据与流式传输契约
 tools/              # 构建、音频校验与设备探针
 docs/               # 架构与变更记录
 ```
