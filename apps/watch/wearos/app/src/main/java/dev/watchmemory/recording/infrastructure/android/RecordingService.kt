@@ -1,5 +1,6 @@
 package dev.watchmemory.recording.infrastructure.android
 
+import dev.koememo.telemetry.BatteryTelemetry
 import android.Manifest
 import android.app.*
 import android.content.Intent

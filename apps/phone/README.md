@@ -21,3 +21,31 @@ python3 tools/sync/verify-device-transfer.py --phone "$PHONE_SERIAL" --watch "$W
 定时录音建议采用预约时间 → 手表通知 → 用户点击打开录音界面 → 启动 microphone 前台服务。手机按需发起录音也采用相同的手表确认入口。Android 的后台启动豁免和麦克风的使用中权限是两项独立限制，精确闹钟本身不能保证无人操作时启动麦克风。定时任务和预约录音属于后续功能。
 
 [后台接收事件](https://developer.android.com/training/wearables/data/events) · [周期调度](https://developer.android.com/reference/androidx/work/PeriodicWorkRequest) · [麦克风启动限制](https://developer.android.com/develop/background-work/services/fgs/restrictions-bg-start)
+
+## 双端同步性能统计
+
+两端在应用私有目录 `files/diagnostics/sync.jsonl` 写入本机数据。每次连接尝试记录开始、约每 60 秒的快照和结束结果。约 1 MiB 后轮换，保留上一份 `sync.previous.jsonl`。仅同步期间采样。新版两端用同一 session 关联，重试产生新的 attempt。旧版通道在手表上标为 legacy。传输中进程被终止可能只有开始或中间样本。
+
+在仓库根目录执行以下命令导出 debug 包的日志。若发生轮换，还可按相同方式导出上一份，一起交给脚本。
+
+```sh
+adb -s "$PHONE_SERIAL" exec-out run-as dev.watchmemory cat files/diagnostics/sync.jsonl > phone-sync.jsonl
+adb -s "$WATCH_SERIAL" exec-out run-as dev.watchmemory cat files/diagnostics/sync.jsonl > watch-sync.jsonl
+python3 tools/sync/performance.py phone-sync.jsonl watch-sync.jsonl
+```
+
+- payload_bytes 为本次实际复制的音频字节，不含续传跳过的前缀、协议开销和无线链路重传；两端不可相加当作文件大小。平均吞吐包含发现、校验和退避等本次尝试开销。
+- phase_wall_ms 含等待，phase_thread_cpu_ns 只计同步线程，process_cpu_ms 含本应用其他线程。手表同时录音时进程 CPU 含录音开销。手表录音本身的采集、编码和写盘统计仍由实验设置中的录音性能诊断控制。
+- 电量百分比、电荷计数、电流、温度、电压及充电状态为整机读数，缺失字段表示设备未报告。汇总仅对有首尾且所有样本均显示拔电放电的尝试计算整机净下降；短任务可能低于电量计分辨率。采样间隔内短暂接电可能无法观察。电荷计数的单位和精度需要在具体设备验证。
+- 对比同步策略时，固定录音编码、时长和屏幕状态，用同设备的“只录不传”作为基线；USB 给手机供电时仅验证采样链路，正式耗电实验用电池供电。
+
+### 核对系统按应用估算的能耗
+
+在录制或同步测试前后分别保存以下输出，按设备和当前用户的 UID 匹配 `Estimated power use (mAh)` 里的应用行。保留统计起始时间，只有同设备、同 UID、同一系统统计窗口的两份快照才适合做差。包名过滤仍可能包含其他 UID 的整机汇总。该命令为只读，使用它不需要重置全机统计。
+
+```sh
+adb -s "$SERIAL" shell cmd package list packages -U --user 0 dev.watchmemory
+adb -s "$SERIAL" shell dumpsys batterystats dev.watchmemory
+```
+
+系统给 UID 的 CPU、audio 等分类为归因估算，可能包含录音和同步并行的消耗。框架代为执行的工作也可能计入其他 UID。用应用的阶段耗时、CPU 时间、字节和系统统计交叉分析。调试内存可用 `adb -s "$SERIAL" shell dumpsys meminfo dev.watchmemory` 获取进程 PSS。系统统计字段和硬件电量监测能力依设备而异。

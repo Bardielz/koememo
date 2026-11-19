@@ -7,6 +7,7 @@ import android.util.Log
 import com.google.android.gms.tasks.Tasks
 import com.google.android.gms.wearable.*
 import dev.koememo.sync.*
+import dev.koememo.telemetry.SyncMetrics
 import java.io.*
 import java.util.UUID
 import java.util.concurrent.CountDownLatch
@@ -84,12 +85,15 @@ class SyncService : Service() {
     private fun transfer() {
         var message = "已暂停，可继续同步"
         for (attempt in 0..3) {
+            val metrics = SyncMetrics(this, "phone", session)
+            var outcome = "interrupted"
             try {
                 checkActive()
                 stage = "discover"
                 segment = "-"
                 bytes = 0
-                val count = receive(session)
+                val count = receive(session, metrics)
+                outcome = "completed"
                 message = "同步完成，已校验 ${count} 段"
                 Log.i("KoeMemoSync", "session=$session side=phone reason=completed count=$count")
                 break
@@ -104,13 +108,20 @@ class SyncService : Service() {
                     else -> cause.message ?: cause.javaClass.simpleName
                 }
                 Log.w("KoeMemoSync", "session=$session side=phone reason=$reason stage=$stage segment=$segment bytes=$bytes attempt=$attempt", e)
+                outcome = if (paused) "paused" else cause.javaClass.simpleName
                 if (paused) break
                 if (!retry || attempt == 3) {
                     message = if (cause is WatchUnavailable) "等待手表连接，可继续同步" else "同步失败，可重试：" + (cause.message ?: reason)
                     break
                 }
                 publish("连接中断，正在等待重试（${attempt+1}/3）")
-                if (stopped.await(2L shl attempt, TimeUnit.SECONDS)) break
+                metrics.enter("backoff")
+                if (stopped.await(2L shl attempt, TimeUnit.SECONDS)) {
+                    outcome = "paused"
+                    break
+                }
+            } finally {
+                metrics.finish(outcome)
             }
         }
         if (stopped.count == 0L) {
@@ -140,7 +151,12 @@ class SyncService : Service() {
         }
     }
 
-    private fun receive(session: String): Int {
+    private fun receive(session: String, metrics: SyncMetrics): Int {
+        fun enter(phase: String) {
+            stage = phase
+            metrics.enter(phase)
+        }
+        enter("discover")
         val capabilities = awaitSetup(Wearable.getCapabilityClient(this).getAllCapabilities(CapabilityClient.FILTER_REACHABLE))
         val nodes = capabilities[CAPABILITY]?.nodes.orEmpty()
         if (nodes.isEmpty()) throw WatchUnavailable()
@@ -149,7 +165,7 @@ class SyncService : Service() {
         checkActive()
         val withSession = capabilities[SESSION_CAPABILITY]?.nodes.orEmpty().any { it.id == watch.id }
         val path = if (withSession) "$CHANNEL/$session" else CHANNEL
-        stage = "open"
+        enter("open")
         val opening = client.openChannel(watch.id, path)
         val channel = try {
             awaitSetup(opening)
@@ -162,12 +178,12 @@ class SyncService : Service() {
             checkActive()
             val input = DataInputStream(awaitSetup(client.getInputStream(channel)).buffered())
             val output = DataOutputStream(awaitSetup(client.getOutputStream(channel)).buffered())
-            stage = "catalog"
+            enter("catalog")
             val count = input.readInt(); require(count in 0..100000)
             val entries = List(count) { Segment.read(input) }
             entries.forEachIndexed { index, item ->
                 checkActive()
-                stage = "verify_local"
+                enter("verify_local")
                 segment = item.name
                 bytes = 0
                 val dir = File(File(File(filesDir, "audio"),watch.id.toByteArray().joinToString("") { "%02x".format(it) }),item.session)
@@ -178,22 +194,30 @@ class SyncService : Service() {
                 if (part.length() > item.size) check(part.delete())
                 val offset = if (done) item.size else part.length()
                 bytes = offset
-                stage = "receive"
+                enter("receive")
                 publish("正在同步 ${index+1}/$count")
                 output.writeInt(index); output.writeLong(offset); output.flush()
                 if (!done) {
                     check(dir.usableSpace > item.size-offset) { "手机存储空间不足" }
-                    FileOutputStream(part,true).use { copyExactly(input,it,item.size-offset) { n -> bytes += n }; it.fd.sync() }
-                    stage = "verify_hash"
+                    FileOutputStream(part,true).use {
+                        copyExactly(input,it,item.size-offset) { n ->
+                            bytes += n
+                            metrics.copied(n)
+                        }
+                        enter("fsync")
+                        it.fd.sync()
+                    }
+                    enter("verify_hash")
                     if (part.sha256() != item.hash) { check(part.delete()); error("校验失败，请重试") }
                     android.system.Os.rename(part.path,target.path)
                 }
-                stage = "ack"
+                enter("ack")
                 output.writeUTF(item.hash); output.flush()
+                metrics.confirmed(offset, item.size)
             }
             output.writeInt(-1); output.flush()
             check(input.readBoolean()) { "手表未确认完成，请重试" }
-            stage = "completed"
+            enter("completed")
             return count
         } finally { client.close(channel); active = null }
     }
