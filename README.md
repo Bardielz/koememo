@@ -2,7 +2,7 @@
 
 Kotlin 原生 Wear OS 本地录音应用，面向 Galaxy Watch5 等手表。支持熄屏录音、连续分段保存，以及音源、采样率和编码格式的实验对比。
 
-当前开发版本 **0.1.6-dev**，处于设备验证阶段。KoeMemo 是原「随声记 / WatchMemory」项目的新名称；保留应用 ID `dev.watchmemory`，以兼容原有应用数据和更新路径。
+当前开发版本 **0.1.7-dev**，处于设备验证阶段。KoeMemo 是原「随声记 / WatchMemory」项目的新名称；保留应用 ID `dev.watchmemory`，以兼容原有应用数据和更新路径。
 
 ## 功能
 

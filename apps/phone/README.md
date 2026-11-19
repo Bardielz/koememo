@@ -1,6 +1,6 @@
 # 安卓手机端
 
-在仓库根目录执行 `apps/watch/wearos/gradlew -p apps/watch/wearos :phone:assembleDebug :app:assembleDebug`。phone-debug.apk 安装到安卓手机，app-debug.apk 安装到配对手表，两端需要相同 applicationId、签名与可用的 Google Play services。使用同一次构建生成的两个 APK。手表已有较高版本时先集成对应分支再测试，以免降级或丢失数据。
+在仓库根目录执行 `apps/watch/wearos/gradlew -p apps/watch/wearos :phone:assembleDebug :app:assembleDebug`。phone-debug.apk 安装到安卓手机，app-debug.apk 安装到配对手表，两端需要相同 applicationId、签名与可用的 Google Play services。使用同一次构建生成的两个 APK。本分支保留 0.1.6-dev 的录音诊断，两个 APK 版本均为 0.1.7-dev。
 
 手机点击“从手表同步”。已关闭片段保存在手机应用私有目录。点击片段可播放或通过系统文件选择器导出。暂停或断线后再次点击同步，手机根据磁盘上的临时文件恢复。手表保留源文件。第一版由用户在手机前台发起，支持一台可达手表。
 
