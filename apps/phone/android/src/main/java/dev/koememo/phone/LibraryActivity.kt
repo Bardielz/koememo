@@ -24,6 +24,12 @@ class LibraryActivity : Activity() {
     override fun onCreate(state: Bundle?) {
         super.onCreate(state)
         val layout = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
+        layout.setOnApplyWindowInsetsListener { view, insets ->
+            val safe = insets.getInsets(android.view.WindowInsets.Type.systemBars() or android.view.WindowInsets.Type.displayCutout())
+            view.setPadding(safe.left, safe.top, safe.right, safe.bottom)
+            insets
+        }
+        layout.addView(TextView(this).apply { text = "KoeMemo"; textSize = 22f })
         status = TextView(this); sync = Button(this).apply { text = "从手表同步"; setOnClickListener { startSync() } }
         layout.addView(sync); layout.addView(Button(this).apply { text = "暂停同步"; setOnClickListener { cancel() } })
         layout.addView(status)
