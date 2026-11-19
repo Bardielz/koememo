@@ -1,4 +1,7 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    <queries>
+        <package android:name="com.google.android.wearable.app.cn" />
+    </queries>
     <application android:label="KoeMemo" android:allowBackup="false" android:theme="@android:style/Theme.Material.Light.NoActionBar">
         <activity android:name=".LibraryActivity" android:exported="true"><intent-filter>
             <action android:name="android.intent.action.MAIN"/><category android:name="android.intent.category.LAUNCHER"/>
