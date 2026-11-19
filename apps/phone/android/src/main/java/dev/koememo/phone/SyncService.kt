@@ -85,7 +85,7 @@ class SyncService : Service() {
     private fun transfer() {
         var message = "已暂停，可继续同步"
         for (attempt in 0..3) {
-            val metrics = SyncMetrics(this, "phone", session)
+            val metrics = if (PhoneExperiments.collectMetrics(this)) SyncMetrics(this, "phone", session) else null
             var outcome = "interrupted"
             try {
                 checkActive()
@@ -115,13 +115,13 @@ class SyncService : Service() {
                     break
                 }
                 publish("连接中断，正在等待重试（${attempt+1}/3）")
-                metrics.enter("backoff")
+                metrics?.enter("backoff")
                 if (stopped.await(2L shl attempt, TimeUnit.SECONDS)) {
                     outcome = "paused"
                     break
                 }
             } finally {
-                metrics.finish(outcome)
+                metrics?.finish(outcome)
             }
         }
         if (stopped.count == 0L) {
@@ -151,10 +151,10 @@ class SyncService : Service() {
         }
     }
 
-    private fun receive(session: String, metrics: SyncMetrics): Int {
+    private fun receive(session: String, metrics: SyncMetrics?): Int {
         fun enter(phase: String) {
             stage = phase
-            metrics.enter(phase)
+            metrics?.enter(phase)
         }
         enter("discover")
         val capabilities = awaitSetup(Wearable.getCapabilityClient(this).getAllCapabilities(CapabilityClient.FILTER_REACHABLE))
@@ -202,7 +202,7 @@ class SyncService : Service() {
                     FileOutputStream(part,true).use {
                         copyExactly(input,it,item.size-offset) { n ->
                             bytes += n
-                            metrics.copied(n)
+                            metrics?.copied(n)
                         }
                         enter("fsync")
                         it.fd.sync()
@@ -213,7 +213,7 @@ class SyncService : Service() {
                 }
                 enter("ack")
                 output.writeUTF(item.hash); output.flush()
-                metrics.confirmed(offset, item.size)
+                metrics?.confirmed(offset, item.size)
             }
             output.writeInt(-1); output.flush()
             check(input.readBoolean()) { "手表未确认完成，请重试" }

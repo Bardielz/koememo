@@ -34,6 +34,7 @@ class LibraryActivity : Activity() {
                 requestPermissions(arrayOf(android.Manifest.permission.POST_NOTIFICATIONS), 2)
             }
         } }
+        layout.addView(Button(this).apply { text = "实验功能"; setOnClickListener { PhoneExperiments.show(this@LibraryActivity) } })
         layout.addView(sync)
         pause = Button(this).apply { text = "暂停同步"; setOnClickListener {
             startService(Intent(this@LibraryActivity, SyncService::class.java).setAction(SyncService.PAUSE))

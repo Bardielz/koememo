@@ -12,6 +12,7 @@ import java.util.concurrent.atomic.AtomicLong
 
 /** One transfer attempt. Phase transitions and finish run on the transfer worker thread. */
 class SyncMetrics(context: Context, private val side: String, private val session: String) {
+    private val health = context.getSystemService(android.os.health.SystemHealthManager::class.java)
     private val battery = BatteryTelemetry(context)
     private val directory = File(context.filesDir, "diagnostics")
     private val attempt = UUID.randomUUID().toString()
@@ -68,6 +69,14 @@ class SyncMetrics(context: Context, private val side: String, private val sessio
     private fun write(event: String, outcome: String? = null) {
         runCatching {
             val row = JSONObject(battery.snapshot()).apply {
+                if (event != "sample") runCatching {
+                    val uid = health.takeMyUidSnapshot()
+                    fun cpu(key: Int, name: String) {
+                        if (uid.hasMeasurement(key)) put(name, uid.getMeasurement(key))
+                    }
+                    cpu(android.os.health.UidHealthStats.MEASUREMENT_USER_CPU_TIME_MS, "uid_user_cpu_ms")
+                    cpu(android.os.health.UidHealthStats.MEASUREMENT_SYSTEM_CPU_TIME_MS, "uid_system_cpu_ms")
+                }
                 put("v", 1)
                 put("side", side)
                 put("session", session)
