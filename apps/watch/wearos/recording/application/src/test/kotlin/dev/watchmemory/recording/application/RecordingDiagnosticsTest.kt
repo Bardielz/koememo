@@ -24,10 +24,10 @@ class RecordingDiagnosticsTest {
         val clock = Clock(); val trace = Trace(); val stats = RecordingDiagnostics(true, clock, trace)
         stats.measure(RecordingStage.CAPTURE_READ) { clock.wall += 1000; clock.cpu += 10 }
         val failure = IllegalStateException("read failed")
-        val caught = assertThrows(IllegalStateException::class.java) {
+        val caught = assertThrows(RecordingFailure::class.java) {
             stats.measure(RecordingStage.CAPTURE_READ) { clock.wall += 2000; clock.cpu += 20; throw failure }
         }
-        assertSame(failure, caught); assertEquals(0, trace.depth)
+        assertSame(failure, caught.cause); assertEquals(0, trace.depth)
         val values = stats.snapshot()
         assertEquals(2L, values["capture_read_calls"])
         assertEquals(3000L, values["capture_read_wall_ns"])

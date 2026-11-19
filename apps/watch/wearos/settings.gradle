@@ -4,3 +4,6 @@ rootProject.name = 'KoeMemo'
 include ':app'
 
 include ':recording:domain', ':recording:application'
+
+include ':phone'
+project(':phone').projectDir = file('../../phone/android')

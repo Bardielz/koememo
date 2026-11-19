@@ -1,4 +1,4 @@
-package dev.watchmemory.recording.infrastructure.android
+package dev.koememo.telemetry
 
 import android.content.Context
 import android.content.Intent
@@ -13,6 +13,8 @@ class BatteryTelemetry(private val context: Context) {
             val value = manager.getIntProperty(id)
             if (value != Int.MIN_VALUE) put(key, value)
         }
+        val capacity = manager.getIntProperty(BatteryManager.BATTERY_PROPERTY_CAPACITY)
+        if (capacity in 0..100) put("battery_percent", capacity)
         property("charge_counter_uah_reported", BatteryManager.BATTERY_PROPERTY_CHARGE_COUNTER)
         // OEM units/accuracy require validation before converting to power.
         property("current_now_raw", BatteryManager.BATTERY_PROPERTY_CURRENT_NOW)

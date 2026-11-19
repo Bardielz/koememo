@@ -12,6 +12,8 @@ import dev.watchmemory.recording.infrastructure.audio.AndroidRecordingPlayback
 
 /** Explicit composition root; Android dependencies never enter domain/application modules. */
 class AppGraph private constructor(context: Context) {
+    private val exitEvidence = dev.watchmemory.recording.infrastructure.android.ProcessExitEvidence(context)
+    fun processExitEvidence() = exitEvidence.snapshot()
     val runtime = RecordingRuntime()
     val state: RecordingReadModel get() = runtime
     val repository = FileRecordingRepository(context)

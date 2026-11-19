@@ -41,7 +41,7 @@ open class MainActivity : Activity() {
     }
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        if (!graph.state.busy) graph.sessions.recoverAfterProcessDeath()
+        if (!graph.state.busy) graph.sessions.recoverAfterProcessDeath { graph.processExitEvidence() }
         val column = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             gravity = Gravity.CENTER_HORIZONTAL

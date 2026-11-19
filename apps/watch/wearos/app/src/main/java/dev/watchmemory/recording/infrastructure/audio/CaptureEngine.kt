@@ -25,6 +25,7 @@ class CaptureEngine(private val observer: Observer, private val source: Recordin
         var codec: MediaCodec? = null
         var codecStarted = false
         var micStarted = false
+        var primaryFailure: Throwable? = null
         try {
             val minimum = AudioRecord.getMinBufferSize(sampleRate, AudioFormat.CHANNEL_IN_MONO, AudioFormat.ENCODING_PCM_16BIT)
             check(minimum > 0) { "Microphone does not support $sampleRate Hz" }
@@ -141,12 +142,23 @@ class CaptureEngine(private val observer: Observer, private val source: Recordin
                 if (now - lastDiagnostics >= 60000) { reportDiagnostics(); lastDiagnostics = now }
                 if (now - lastSync >= 30000) { writer.sync(); lastSync = now }
             }
+        } catch (error: Throwable) {
+            primaryFailure = error
+            throw error
         } finally {
-            try {
-                try { if (micStarted) mic?.stop() } finally { mic?.release() }
-            } finally {
-                try { if (codecStarted) codec?.stop() } finally { codec?.release() }
+            var cleanupFailure: Throwable? = null
+            fun cleanup(stage: String, action: () -> Unit) {
+                try { recordingStage(stage, action) }
+                catch (error: Throwable) {
+                    val previous = primaryFailure ?: cleanupFailure
+                    if (previous != null) previous.addSuppressed(error) else cleanupFailure = error
+                }
             }
+            cleanup("MIC_STOP") { if (micStarted) mic?.stop() }
+            cleanup("MIC_RELEASE") { mic?.release() }
+            cleanup("CODEC_STOP") { if (codecStarted) codec?.stop() }
+            cleanup("CODEC_RELEASE") { codec?.release() }
+            if (primaryFailure == null) cleanupFailure?.let { throw it }
         }
     }
 }

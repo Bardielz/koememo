@@ -2,9 +2,13 @@ plugins { id 'com.android.application'; id 'org.jetbrains.kotlin.android' }
 android {
     namespace 'dev.watchmemory'
     compileSdk 35
-    defaultConfig { applicationId 'dev.watchmemory'; minSdk 30; targetSdk 35; versionCode 6; versionName '0.1.5-dev' }
+    defaultConfig { applicationId 'dev.watchmemory'; minSdk 30; targetSdk 35; versionCode 8; versionName '0.1.7-dev' }
     compileOptions { sourceCompatibility JavaVersion.VERSION_17; targetCompatibility JavaVersion.VERSION_17 }
     kotlinOptions { jvmTarget = '17' }
     lint { abortOnError true }
 }
 dependencies { implementation project(':recording:application'); testImplementation 'junit:junit:4.13.2' }
+
+dependencies { implementation 'com.google.android.gms:play-services-wearable:19.0.0' }
+android.sourceSets.main.java.srcDir rootProject.file('../../../packages/contracts/audio/src')
+android.sourceSets.main.java.srcDir rootProject.file('../../../packages/android/telemetry/src')
