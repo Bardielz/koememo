@@ -9,10 +9,10 @@ class RecordingSessions(private val repository: RecordingRepository, private val
     private var session: RecordingSession? = null
     fun saved() = repository.load()
     fun library() = repository.library()
-    fun recoverAfterProcessDeath() {
+    fun recoverAfterProcessDeath(evidence: () -> Map<String, Any> = { emptyMap() }) {
         val saved = repository.load()
         if (!saved.recording) return
-        saved.sessionId?.let { runCatching { repository.append(SessionId(it), "unclean_restart") } }
+        saved.sessionId?.let { runCatching { repository.append(SessionId(it), "unclean_restart", runCatching { evidence() }.getOrElse { mapOf("exit_history_error" to it.javaClass.name) }) } }
         repository.save(saved.copy(recording = false, status = "上次录音意外中断，请检查文件"))
     }
     fun begin(configuration: RecordingConfiguration, fields: Map<String, Any>): RecordingPlan {
@@ -46,6 +46,13 @@ class RecordingSessions(private val repository: RecordingRepository, private val
             if (finish) runCatching { repository.append(aggregate.id, "session_finished") }
         }
         val saved = repository.load()
+        if (aggregate == null && error) {
+            runCatching {
+                val id = saved.sessionId?.let { SessionId(it) } ?: repository.createSession()
+                repository.prepare(id)
+                repository.append(id, "error", fields + ("reason" to status))
+            }
+        }
         repository.save(SavedRecording(if (finish) null else saved.sessionId, false, status))
         session = null
     }
