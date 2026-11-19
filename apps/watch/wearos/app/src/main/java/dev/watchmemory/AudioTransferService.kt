@@ -24,40 +24,49 @@ class AudioTransferService : WearableListenerService() {
     override fun onChannelOpened(channel: ChannelClient.Channel) {
         val client = Wearable.getChannelClient(this)
         val timer = java.util.Timer(true)
-        var watchdog: java.util.TimerTask? = null
-        fun deadline() {
-            watchdog?.cancel()
-            watchdog = object : java.util.TimerTask() {
-                override fun run() { client.close(channel) }
-            }.also { timer.schedule(it, 180000L) }
-            timer.purge()
+        val progress = TransferProgress(android.os.SystemClock::elapsedRealtime)
+        val session = channel.path.removePrefix("$CHANNEL/").takeIf {
+            it.matches(Regex("[0-9a-f-]{36}"))
         }
+        fun details() = "session=${session ?: "legacy"} side=watch stage=${progress.stage} segment=${progress.segment} bytes=${progress.bytes}"
+        timer.schedule(object : java.util.TimerTask() {
+            override fun run() {
+                if (progress.expired(180_000L)) {
+                    android.util.Log.w("KoeMemoSync", "${details()} reason=idle_timeout")
+                    cancel()
+                    client.close(channel)
+                }
+            }
+        }, 5_000L, 5_000L)
         try {
-            deadline()
-            require(channel.path == CHANNEL)
+            require(channel.path == CHANNEL || session != null && channel.path == "$CHANNEL/$session")
             val output = DataOutputStream(Tasks.await(client.getOutputStream(channel)).buffered())
             val input = DataInputStream(Tasks.await(client.getInputStream(channel)).buffered())
+            progress.enter("catalog")
             val entries = catalog()
             output.writeInt(entries.size)
             entries.forEach { it.first.send(output) }; output.flush()
             while (true) {
-                deadline()
+                progress.enter("request")
                 val index = input.readInt()
                 if (index == -1) { output.writeBoolean(true); output.flush(); break }
                 val (entry,file) = entries[index]
                 val offset = input.readLong()
                 require(offset in 0..entry.size)
+                progress.enter("send", entry.name, offset)
                 file.inputStream().use { source ->
                     source.channel.position(offset)
-                    copyExactly(source, output, entry.size-offset)
+                    copyExactly(source, output, entry.size-offset, progress::advanced)
                 }
                 output.flush()
+                progress.enter("ack")
                 require(input.readUTF() == entry.hash)
                 check(getSharedPreferences("sync_receipts", MODE_PRIVATE).edit()
                     .putBoolean(channel.nodeId + "/" + entry.hash, true).commit())
             }
+            android.util.Log.i("KoeMemoSync", "${details()} reason=completed")
         } catch (e: Exception) {
-            android.util.Log.w("KoeMemoSync","Transfer ended", e)
+            android.util.Log.w("KoeMemoSync","${details()} reason=${e.javaClass.simpleName}", e)
         } finally { timer.cancel(); client.close(channel) }
     }
 }

@@ -5,6 +5,8 @@ import java.security.MessageDigest
 
 const val CHANNEL = "/koememo/audio/v1"
 const val CAPABILITY = "koememo_audio_v1"
+const val SESSION_CAPABILITY = "koememo_audio_sessions"
+
 data class Segment(val session: String, val name: String, val size: Long, val hash: String) {
     init {
         require(session.matches(Regex("[A-Za-z0-9-]{1,100}")))
@@ -18,7 +20,7 @@ data class Segment(val session: String, val name: String, val size: Long, val ha
         fun read(input: DataInputStream) = Segment(input.readUTF(), input.readUTF(), input.readLong(), input.readUTF())
     }
 }
-fun copyExactly(input: InputStream, output: OutputStream, length: Long) {
+fun copyExactly(input: InputStream, output: OutputStream, length: Long, progress: (Int) -> Unit = {}) {
     val buffer = ByteArray(32768)
     var remaining = length
     while (remaining > 0) {
@@ -26,6 +28,7 @@ fun copyExactly(input: InputStream, output: OutputStream, length: Long) {
         if (count <= 0) throw EOFException("传输中断")
         output.write(buffer, 0, count)
         remaining -= count
+        progress(count)
     }
 }
 fun File.sha256(): String {
@@ -39,4 +42,28 @@ fun File.sha256(): String {
         }
     }
     return digest.digest().joinToString("") { "%02x".format(it) }
+}
+
+class TransferProgress(private val now: () -> Long) {
+    @Volatile private var lastActivity = now()
+    @Volatile var stage = "open"
+        private set
+    @Volatile var segment = "-"
+        private set
+    @Volatile var bytes = 0L
+        private set
+
+    fun enter(stage: String, segment: String = this.segment, offset: Long = bytes) {
+        lastActivity = now()
+        this.segment = segment
+        bytes = offset
+        this.stage = stage
+    }
+
+    fun advanced(count: Int) {
+        bytes += count
+        lastActivity = now()
+    }
+
+    fun expired(timeoutMs: Long) = now() - lastActivity >= timeoutMs
 }

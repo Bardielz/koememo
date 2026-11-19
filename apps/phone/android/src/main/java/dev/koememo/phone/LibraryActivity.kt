@@ -4,13 +4,14 @@ import android.app.Activity
 import android.os.Bundle
 import android.media.MediaPlayer
 import android.widget.*
-import com.google.android.gms.tasks.Tasks
-import com.google.android.gms.wearable.*
-import dev.koememo.sync.*
+import android.content.Intent
+import android.content.SharedPreferences
 import java.io.*
 
 class LibraryActivity : Activity() {
-    companion object { private val transferring = java.util.concurrent.atomic.AtomicBoolean(false) }
+    private val syncState by lazy { getSharedPreferences("sync_state", MODE_PRIVATE) }
+    private val syncListener = SharedPreferences.OnSharedPreferenceChangeListener { _, _ -> renderSync() }
+    private lateinit var pause: Button
     private lateinit var status: TextView
     private lateinit var libraryHint: TextView
     private var loadGeneration = 0
@@ -18,8 +19,6 @@ class LibraryActivity : Activity() {
     private var exporting: File? = null
     private lateinit var sync: Button
     private var player: MediaPlayer? = null
-    @Volatile private var active: ChannelClient.Channel? = null
-    @Volatile private var cancelled = false
     private val root get() = File(filesDir,"audio")
     override fun onCreate(state: Bundle?) {
         super.onCreate(state)
@@ -30,17 +29,43 @@ class LibraryActivity : Activity() {
             insets
         }
         layout.addView(TextView(this).apply { text = "KoeMemo"; textSize = 22f })
-        status = TextView(this); sync = Button(this).apply { text = "从手表同步"; setOnClickListener { startSync() } }
-        layout.addView(sync); layout.addView(Button(this).apply { text = "暂停同步"; setOnClickListener { cancel() } })
+        status = TextView(this); sync = Button(this).apply { text = "从手表同步"; setOnClickListener {
+            startForegroundService(Intent(this@LibraryActivity, SyncService::class.java))
+            if (android.os.Build.VERSION.SDK_INT >= 33 && checkSelfPermission(android.Manifest.permission.POST_NOTIFICATIONS) != android.content.pm.PackageManager.PERMISSION_GRANTED) {
+                requestPermissions(arrayOf(android.Manifest.permission.POST_NOTIFICATIONS), 2)
+            }
+        } }
+        layout.addView(sync)
+        pause = Button(this).apply { text = "暂停同步"; setOnClickListener {
+            startService(Intent(this@LibraryActivity, SyncService::class.java).setAction(SyncService.PAUSE))
+        } }
+        layout.addView(pause)
         layout.addView(status)
         libraryHint = TextView(this).apply { text = "正在读取本地录音…" }
         layout.addView(libraryHint)
         exporting = state?.getString("exportFile")?.let(::File)
         list = ListView(this)
-        layout.addView(list); setContentView(layout); refresh()
+        layout.addView(list); setContentView(layout)
     }
-    private fun cancel() { cancelled = true; active?.let { Wearable.getChannelClient(this).close(it) } }
-    override fun onDestroy() { cancel(); player?.release(); super.onDestroy() }
+    override fun onStart() {
+        super.onStart()
+        syncState.registerOnSharedPreferenceChangeListener(syncListener)
+        renderSync()
+        if (SyncService.running) refresh()
+    }
+    override fun onStop() {
+        syncState.unregisterOnSharedPreferenceChangeListener(syncListener)
+        super.onStop()
+    }
+    private fun renderSync() {
+        val running = SyncService.running
+        val saved = syncState.getString("status", "").orEmpty()
+        status.text = if (!running && syncState.getBoolean("active", false)) "同步已中断，可继续同步" else saved
+        sync.isEnabled = !running
+        pause.isEnabled = running
+        if (!running) refresh()
+    }
+    override fun onDestroy() { player?.release(); super.onDestroy() }
     private fun refresh() {
         val generation = ++loadGeneration
         Thread {
@@ -90,50 +115,5 @@ class LibraryActivity : Activity() {
             }.getOrElse { "导出失败：" + it.message }
             runOnUiThread { status.text = message }
         }.start()
-    }
-    private fun startSync() {
-        if (!transferring.compareAndSet(false,true)) { status.text = "同步进行中"; return }
-        sync.isEnabled = false; cancelled = false; status.text = "正在查找手表"
-        Thread {
-            val result = runCatching { receive() }.fold({ "同步完成，已校验 ${it} 段" }, { if (cancelled) "已暂停，可继续同步" else "同步失败，可重试：" + (it.message ?: it.javaClass.simpleName) })
-            transferring.set(false)
-            runOnUiThread { if (!isDestroyed) { status.text = result; sync.isEnabled = true; refresh() } }
-        }.start()
-    }
-    private fun receive(): Int {
-        val nodes = Tasks.await(Wearable.getCapabilityClient(this).getCapability(CAPABILITY, CapabilityClient.FILTER_REACHABLE)).nodes
-        val watch = nodes.singleOrNull() ?: error(if (nodes.isEmpty()) "未发现安装 KoeMemo 的手表" else "请仅连接一台手表")
-        val client = Wearable.getChannelClient(this)
-        val channel = Tasks.await(client.openChannel(watch.id, CHANNEL))
-        active = channel
-        try {
-            check(!cancelled)
-            val input = DataInputStream(Tasks.await(client.getInputStream(channel)).buffered())
-            val output = DataOutputStream(Tasks.await(client.getOutputStream(channel)).buffered())
-            val count = input.readInt(); require(count in 0..100000)
-            val entries = List(count) { Segment.read(input) }
-            entries.forEachIndexed { index, item ->
-                check(!cancelled)
-                val dir = File(File(root,watch.id.toByteArray().joinToString("") { "%02x".format(it) }),item.session)
-                check(dir.isDirectory || dir.mkdirs())
-                val target = File(dir,item.name)
-                val done = target.length() == item.size && target.sha256() == item.hash
-                val part = File(dir,item.name + "." + item.hash + ".part")
-                if (part.length() > item.size) check(part.delete())
-                val offset = if (done) item.size else part.length()
-                runOnUiThread { status.text = "正在同步 ${index+1}/$count" }
-                output.writeInt(index); output.writeLong(offset); output.flush()
-                if (!done) {
-                    check(dir.usableSpace > item.size-offset) { "手机存储空间不足" }
-                    FileOutputStream(part,true).use { copyExactly(input,it,item.size-offset); it.fd.sync() }
-                    if (part.sha256() != item.hash) { check(part.delete()); error("校验失败，请重试") }
-                    android.system.Os.rename(part.path,target.path)
-                }
-                output.writeUTF(item.hash); output.flush()
-            }
-            output.writeInt(-1); output.flush()
-            check(input.readBoolean()) { "手表未确认完成，请重试" }
-            return count
-        } finally { client.close(channel); active = null }
     }
 }
