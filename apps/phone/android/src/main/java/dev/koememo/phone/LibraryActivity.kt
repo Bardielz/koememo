@@ -2,7 +2,6 @@ package dev.koememo.phone
 
 import android.app.Activity
 import android.os.Bundle
-import android.media.MediaPlayer
 import android.widget.*
 import android.content.Intent
 import android.content.SharedPreferences
@@ -18,7 +17,7 @@ class LibraryActivity : Activity() {
     private lateinit var list: ListView
     private var exporting: File? = null
     private lateinit var sync: Button
-    private var player: MediaPlayer? = null
+    private lateinit var player: RecordingPlayer
     private val root get() = File(filesDir,"audio")
     override fun onCreate(state: Bundle?) {
         super.onCreate(state)
@@ -41,6 +40,8 @@ class LibraryActivity : Activity() {
         } }
         layout.addView(pause)
         layout.addView(status)
+        player = RecordingPlayer(this)
+        layout.addView(player)
         libraryHint = TextView(this).apply { text = "正在读取本地录音…" }
         layout.addView(libraryHint)
         exporting = state?.getString("exportFile")?.let(::File)
@@ -49,11 +50,13 @@ class LibraryActivity : Activity() {
     }
     override fun onStart() {
         super.onStart()
+        player.resumeUpdates()
         syncState.registerOnSharedPreferenceChangeListener(syncListener)
         renderSync()
         if (SyncService.running) refresh()
     }
     override fun onStop() {
+        player.suspendUpdates()
         syncState.unregisterOnSharedPreferenceChangeListener(syncListener)
         super.onStop()
     }
@@ -65,7 +68,7 @@ class LibraryActivity : Activity() {
         pause.isEnabled = running
         if (!running) refresh()
     }
-    override fun onDestroy() { player?.release(); super.onDestroy() }
+    override fun onDestroy() { player.release(); super.onDestroy() }
     private fun refresh() {
         val generation = ++loadGeneration
         Thread {
@@ -83,10 +86,7 @@ class LibraryActivity : Activity() {
             val file = files[index]
             android.app.AlertDialog.Builder(this).setTitle(file.name).setItems(arrayOf("播放", "导出")) { _, choice ->
                 if (choice == 0) {
-                    player?.release()
-                    player = MediaPlayer()
-                    runCatching { player!!.apply { setDataSource(file.path); prepare(); start() } }
-                        .onFailure { status.text = "播放失败 " + it.message }
+                    player.play(file)
                 } else {
                     exporting = file
                     startActivityForResult(android.content.Intent(android.content.Intent.ACTION_CREATE_DOCUMENT).apply {
