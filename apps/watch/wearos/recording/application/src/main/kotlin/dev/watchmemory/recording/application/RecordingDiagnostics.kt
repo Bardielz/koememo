@@ -23,11 +23,11 @@ class RecordingDiagnostics(
     @PublishedApi internal val cpu = LongArray(calls.size)
     @PublishedApi internal val maxWall = LongArray(calls.size)
     inline fun <T> measure(stage: RecordingStage, block: () -> T): T {
-        if (!enabled) return block()
+        if (!enabled) return recordingStage(stage.name) { block() }
         val start = clock.wallNanos()
         val cpuStart = clock.threadCpuNanos()
         trace.begin("KoeMemo/" + stage.name)
-        try { return block() }
+        try { return recordingStage(stage.name) { block() } }
         finally {
             trace.end()
             val elapsed = (clock.wallNanos() - start).coerceAtLeast(0)

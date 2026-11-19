@@ -29,7 +29,7 @@ python3 tools/audio/diagnostics.py /path/to/events.jsonl
 
 等待耗时不是 CPU 耗时，CPU 时间也不是能量。MediaCodec 可能在系统进程运行，必须用短时 Perfetto 配合分析系统编码器与音频服务。各阶段只是已标记部分，不构成整轮完整账本，也不能精确拆分麦克风、CPU 与存储的 mWh。
 
-关闭诊断时不读取阶段时钟，不打 trace 标记，不生成 performance 事件，不使用 writer 装饰器。开启后的 trace 段使用 `KoeMemo/` 前缀，只有外部追踪启用对应应用时才会采集；应用不自动开启系统追踪。
+关闭诊断时不读取阶段时钟，不打 trace 标记，不生成 performance 事件，writer 装饰器仅提供失败阶段标注，不采集时钟。开启后的 trace 段使用 `KoeMemo/` 前缀，只有外部追踪启用对应应用时才会采集；应用不自动开启系统追踪。
 
 ## 对照方案
 
@@ -40,3 +40,13 @@ python3 tools/audio/diagnostics.py /path/to/events.jsonl
 5. 同时检查音频哈希、结构、完整解码、分段衔接及试听。优化不能通过丢音、延迟保存或改变录音目标来获取表面收益。
 
 本次保留 PCM 批次、编码器超时、32 KiB 写缓冲、30 秒同步、500 ms 音量计算和唤醒锁策略。只有测到热点后才调整这些参数。本功能尚未证明任何耗电下降。
+
+## 失败证据（0.1.6-dev）
+
+`error` 事件增加 `failure_stage`、`exception_type`、`exception_message`、`exception_trace`。空白消息回退到异常类型；堆栈最多 16000 字符，最多八层 cause，并保留部分 suppressed 异常。MediaCodec 异常增加 `codec_diagnostic_info`、`codec_error_code`、`codec_recoverable`、`codec_transient`。这些标记不是自动重试授权。
+
+阶段标注在关闭性能诊断时仍有效。`WRITE_AND_PACKAGE` 包含切段保存；未单独包裹的初始化失败使用 `CAPTURE_SETUP_OR_CLEANUP`。清理错误附加到原始异常，保持根因可见。失败同时写入系统 Logcat，系统日志保留时间有限。
+
+异常退出后手动重新打开应用，`unclean_restart` 保存最近五条 ApplicationExitInfo 的时间、原因、进程、重要性和 PSS/RSS。查询失败记录类型，不阻止恢复。历史记录不保证属于上一轮录音，需结合时间和事件分析；没有记录不代表没有终止。系统杀进程时应用不能保证执行 finally 或写出错误日志。
+
+应用日志留在手表本地，导出后仍须按私有数据管理；本修复不自动开启录音，不宣称消除了系统低内存回收。

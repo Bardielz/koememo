@@ -47,4 +47,14 @@ class RecordingSessionsTest {
         assertEquals(first.sessionId.value, repo.value.sessionId)
         assertEquals("error", repo.events.last())
     }
+    @Test fun recoveryCollectsEvidenceOnceAndSurvivesUnavailableHistory() {
+        val repo = Repository(); repo.value = SavedRecording("session-1", true, "recording")
+        val sessions = RecordingSessions(repo) { "run" }; var reads = 0
+        sessions.recoverAfterProcessDeath { reads++; throw SecurityException("unavailable") }
+        sessions.recoverAfterProcessDeath { reads++; emptyMap() }
+        assertEquals(1, reads)
+        assertFalse(repo.value.recording)
+        assertEquals(listOf("unclean_restart"), repo.events)
+    }
+
 }
