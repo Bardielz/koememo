@@ -7,3 +7,6 @@ include ':recording:domain', ':recording:application'
 
 include ':phone'
 project(':phone').projectDir = file('../../phone/android')
+
+include ':transfer:contract'
+if (providers.gradleProperty('wearDataLayer').getOrElse('true').toBoolean()) include ':transfer:data-layer'

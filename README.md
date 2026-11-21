@@ -121,7 +121,7 @@ tools/              # 构建、音频校验与设备探针
 docs/               # 架构与变更记录
 ```
 
-依赖方向为 `app → application → domain`。Android SDK、MediaCodec、文件和 SharedPreferences 留在 app 适配层；`bootstrap/AppGraph` 负责组装。保留原应用 ID 和 Android 组件入口。详见 [架构说明](docs/architecture.md)。
+依赖方向为 `app → application → domain`。Android SDK、MediaCodec、文件和 SharedPreferences 留在 app 适配层；`bootstrap/AppGraph` 负责组装。保留原应用 ID 和 Android 组件入口。详见 [架构说明](docs/architecture.md) 和 [手表能力适配与无 Google 模块构建](docs/watch-backends.md)。
 
 ## 验证状态与限制
 

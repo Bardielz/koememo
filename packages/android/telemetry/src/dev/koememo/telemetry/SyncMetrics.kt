@@ -11,9 +11,9 @@ import java.util.UUID
 import java.util.concurrent.atomic.AtomicLong
 
 /** One transfer attempt. Phase transitions and finish run on the transfer worker thread. */
-class SyncMetrics(context: Context, private val side: String, private val session: String) {
+class SyncMetrics(context: Context, private val side: String, private val session: String,
+    private val battery: TelemetrySource = DeviceTelemetry.android(context)) {
     private val health = context.getSystemService(android.os.health.SystemHealthManager::class.java)
-    private val battery = BatteryTelemetry(context)
     private val directory = File(context.filesDir, "diagnostics")
     private val attempt = UUID.randomUUID().toString()
     private val started = SystemClock.elapsedRealtime()
