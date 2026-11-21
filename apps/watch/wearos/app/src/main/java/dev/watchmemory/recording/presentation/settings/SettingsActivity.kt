@@ -83,6 +83,11 @@ open class SettingsActivity : Activity() {
                 }
                 option.setOnClickListener { change { settings.setBackend(id) } }
             }
+            column.addView(Button(this).apply {
+                text = "佩戴触发对照"
+                isEnabled = !graph.state.busy
+                setOnClickListener { startActivity(android.content.Intent(this@SettingsActivity, WearSignalActivity::class.java)) }
+            })
             label("采样率")
             val rates = RadioGroup(this).apply { column.addView(this) }
             ExperimentPolicy.sampleRates.forEach { rate ->
