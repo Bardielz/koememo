@@ -15,3 +15,13 @@
 ```
 
 该开关作用于手表。两种构建使用同一输出路径。跨品牌支持需逐固件测试实际采集、熄屏运行和离电续航。
+
+## 三星性能 SDK 探测
+
+在本地取得官方 Galaxy Performance SDK 后，在手表 Gradle 工程构建时传入 JAR 的绝对路径：
+
+```sh
+./gradlew :app:assembleDebug -PsamsungPerformanceJar=/absolute/path/to/sperf.jar
+```
+
+安装后进入「设置 → 实验功能 → 探测三星性能 SDK」。按钮在录音空闲时可用，后台调用一次初始化并缓存本进程结果。界面区分初始化成功、返回 false、调用异常与构建未包含 SDK。结果写入应用私有的 `files/diagnostics/samsung-performance.jsonl` 和 `KoeMemoSPerf` Logcat 标签。默认构建可独立运行。SDK 文件放在仓库外部。

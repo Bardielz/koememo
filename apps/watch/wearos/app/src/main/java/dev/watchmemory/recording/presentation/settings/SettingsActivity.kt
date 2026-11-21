@@ -13,6 +13,7 @@ import android.widget.*
 open class SettingsActivity : Activity() {
     private lateinit var settings: RecordingSettings
     private val graph by lazy { AppGraph.get(this) }
+    private var probing = false
     private var scroll: ScrollView? = null
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -68,6 +69,23 @@ open class SettingsActivity : Activity() {
                 setOnCheckedChangeListener { _, value -> change { settings.setDiagnostics(value) } }
             })
             label("采集录音性能与同步耗电统计。下次录音或同步尝试生效。")
+            column.addView(Button(this).apply {
+                text = "探测三星性能 SDK"
+                isEnabled = !probing && PerformanceProbe.result == null && !graph.state.busy
+                setOnClickListener {
+                    probing = true
+                    isEnabled = false
+                    text = "正在探测…"
+                    Thread({
+                        PerformanceProbe.run(applicationContext)
+                        runOnUiThread {
+                            probing = false
+                            if (!isDestroyed && !isFinishing) render()
+                        }
+                    }, "samsung-performance-probe").start()
+                }
+            })
+            PerformanceProbe.result?.let { label(it) }
             label("录音后端")
             val backends = RadioGroup(this).apply { column.addView(this) }
             val selected = settings.requiredBackend

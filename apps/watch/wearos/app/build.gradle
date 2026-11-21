@@ -11,6 +11,7 @@ dependencies { implementation project(':recording:application'); testImplementat
 
 dependencies {
     implementation project(':transfer:contract')
+    implementation project(':vendor:samsung-performance')
     if (findProject(':transfer:data-layer') != null) implementation project(':transfer:data-layer')
 }
 android.sourceSets.main.java.srcDir rootProject.file('../../../packages/contracts/audio/src')
