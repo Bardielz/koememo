@@ -18,21 +18,39 @@ import dev.watchmemory.R
 
 class RecordingTile : TileService() {
     override fun onTileRequest(requestParams: RequestBuilders.TileRequest): ListenableFuture<TileBuilders.Tile> {
-        val launch = ActionBuilders.LaunchAction.Builder().setAndroidActivity(ActionBuilders.AndroidActivity.Builder()
-            .setPackageName(packageName).setClassName(MainActivity::class.java.name).build()).build()
-        val button = Box.Builder().setWidth(dp(80f)).setHeight(dp(80f)).setModifiers(Modifiers.Builder()
+        val activity = ActionBuilders.AndroidActivity.Builder()
+            .setPackageName(packageName)
+            .setClassName(MainActivity::class.java.name)
+            .build()
+        val launch = ActionBuilders.LaunchAction.Builder().setAndroidActivity(activity).build()
+        val modifiers = Modifiers.Builder()
             .setClickable(Clickable.Builder().setId("open_recorder").setOnClick(launch).build())
             .setSemantics(Semantics.Builder().setContentDescription("打开 KoeMemo 录音").build())
-            .setBackground(Background.Builder().setColor(argb(0xff20372f.toInt()))
-                .setCorner(Corner.Builder().setRadius(dp(40f)).build()).build()).build())
-            .addContent(Image.Builder().setResourceId("mic").setWidth(dp(36f)).setHeight(dp(36f)).build()).build()
+            .setBackground(Background.Builder()
+                .setColor(argb(0xff20372f.toInt()))
+                .setCorner(Corner.Builder().setRadius(dp(40f)).build())
+                .build())
+            .build()
+        val icon = Image.Builder().setResourceId("mic").setWidth(dp(36f)).setHeight(dp(36f)).build()
+        val button = Box.Builder().setWidth(dp(80f)).setHeight(dp(80f))
+            .setModifiers(modifiers).addContent(icon).build()
         val layout = Box.Builder().setWidth(expand()).setHeight(expand()).addContent(button).build()
-        return Futures.immediateFuture(TileBuilders.Tile.Builder().setResourcesVersion("1")
-            .setTileTimeline(TimelineBuilders.Timeline.fromLayoutElement(layout)).build())
+        val tile = TileBuilders.Tile.Builder()
+            .setResourcesVersion(RESOURCE_VERSION)
+            .setTileTimeline(TimelineBuilders.Timeline.fromLayoutElement(layout))
+            .build()
+        return Futures.immediateFuture(tile)
     }
 
-    override fun onTileResourcesRequest(requestParams: RequestBuilders.ResourcesRequest) =
-        Futures.immediateFuture(ResourceBuilders.Resources.Builder().setVersion("1").addIdToImageMapping("mic",
-            ResourceBuilders.ImageResource.Builder().setAndroidResourceByResId(ResourceBuilders.AndroidImageResourceByResId.Builder()
-                .setResourceId(R.drawable.ic_mic).build()).build()).build())
+    override fun onTileResourcesRequest(requestParams: RequestBuilders.ResourcesRequest): ListenableFuture<ResourceBuilders.Resources> {
+        val mic = ResourceBuilders.AndroidImageResourceByResId.Builder().setResourceId(R.drawable.ic_mic).build()
+        val image = ResourceBuilders.ImageResource.Builder().setAndroidResourceByResId(mic).build()
+        val resources = ResourceBuilders.Resources.Builder().setVersion(RESOURCE_VERSION)
+            .addIdToImageMapping("mic", image).build()
+        return Futures.immediateFuture(resources)
+    }
+
+    private companion object {
+        const val RESOURCE_VERSION = "1"
+    }
 }
