@@ -1,5 +1,6 @@
 package dev.watchmemory.recording.presentation.recording
 
+import dev.watchmemory.recording.presentation.RotaryScrollView
 import dev.watchmemory.bootstrap.AppGraph
 import dev.watchmemory.SettingsActivity
 import dev.watchmemory.recording.application.RecordingCommand
@@ -47,7 +48,7 @@ open class MainActivity : Activity() {
             gravity = Gravity.CENTER_HORIZONTAL
             setPadding(dp(34), dp(28), dp(34), dp(36))
         }
-        val scroll = ScrollView(this).apply { isFillViewport = true; addView(column) }
+        val scroll = RotaryScrollView(this).apply { isFillViewport = true; addView(column) }
         setContentView(scroll)
         fun label(text: String, size: Float, color: Int): TextView = TextView(this).apply {
             this.text = text; textSize = size; setTextColor(color); gravity = Gravity.CENTER

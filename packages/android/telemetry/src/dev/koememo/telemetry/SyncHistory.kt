@@ -20,7 +20,7 @@ fun showSyncHistory(activity: Activity) {
 
 private data class Attempt(val first: JSONObject, var last: JSONObject, var discharging: Boolean = true)
 
-private fun readHistory(directory: File): String {
+fun readHistory(directory: File): String {
     val attempts = linkedMapOf<String, Attempt>()
     for (name in listOf("sync.previous.jsonl", "sync.jsonl")) {
         val file = File(directory, name)
