@@ -58,13 +58,13 @@ open class MainActivity : Activity() {
         timer = label("00:00:00", 27f, Color.WHITE).apply { typeface = Typeface.MONOSPACE }
         state = label("准备记录", 13f, Color.LTGRAY)
         fun button(text: String, primary: Boolean = false, action: () -> Unit): Button = Button(this).apply {
-            this.text = text; textSize = 14f; isAllCaps = false; minHeight = dp(44)
+            this.text = text; textSize = 14f; isAllCaps = false; minHeight = dp(48)
             setTextColor(if (primary) Color.rgb(8, 30, 27) else Color.WHITE)
             background = GradientDrawable().apply {
                 cornerRadius = dp(23).toFloat()
                 setColor(if (primary) Color.rgb(126, 226, 198) else Color.rgb(32, 42, 55))
             }
-            column.addView(this, LinearLayout.LayoutParams(-1, dp(46)).apply { topMargin = dp(7) })
+            column.addView(this, LinearLayout.LayoutParams(-1, -2).apply { topMargin = dp(7) })
             setOnClickListener { action() }
         }
         main = button("开始记录", true) {

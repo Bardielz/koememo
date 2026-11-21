@@ -10,6 +10,10 @@ android {
 dependencies { implementation project(':recording:application'); testImplementation 'junit:junit:4.13.2' }
 
 dependencies {
+    implementation 'androidx.wear:wear-ongoing:1.0.0'
+    implementation 'androidx.wear.tiles:tiles:1.4.1'
+    implementation 'androidx.wear.watchface:watchface-complications-data-source:1.2.1'
+    implementation 'com.google.guava:guava:33.2.1-android'
     implementation project(':transfer:contract')
     if (findProject(':transfer:data-layer') != null) implementation project(':transfer:data-layer')
 }

@@ -1,5 +1,8 @@
 package dev.watchmemory.recording.infrastructure.android
 
+import androidx.core.app.NotificationCompat
+import androidx.wear.ongoing.OngoingActivity
+import dev.watchmemory.surfaces.openRecorder
 import android.Manifest
 import android.app.*
 import android.content.Intent
@@ -7,7 +10,6 @@ import android.content.pm.PackageManager
 import android.content.pm.ServiceInfo
 import android.os.*
 import dev.watchmemory.R
-import dev.watchmemory.MainActivity
 import dev.watchmemory.bootstrap.AppGraph
 import dev.watchmemory.recording.domain.*
 import dev.watchmemory.recording.application.*
@@ -178,13 +180,16 @@ open class RecordingService : Service(), CaptureObserver {
         if (value != runtime.muted) { runtime.muted = value; handler.post { log("system_silenced", mapOf("value" to value)) } }
     }
     private fun notification(text: String, ongoing: Boolean = true): Notification {
-        val open = PendingIntent.getActivity(this, 0, Intent(this, MainActivity::class.java), PendingIntent.FLAG_IMMUTABLE)
+        val open = openRecorder(this)
         val pause = PendingIntent.getService(this, 1, Intent(this, dev.watchmemory.RecordingService::class.java)
             .setAction(RecordingCommand.PAUSE.name), PendingIntent.FLAG_IMMUTABLE)
-        return Notification.Builder(this, "recording").setSmallIcon(R.drawable.ic_mic)
+        val builder = NotificationCompat.Builder(this, "recording").setSmallIcon(R.drawable.ic_mic)
             .setContentTitle("KoeMemo").setContentText(text).setContentIntent(open).setOngoing(ongoing).setOnlyAlertOnce(true).apply {
-                if (ongoing) addAction(Notification.Action.Builder(null, "暂停", pause).build())
-            }.build()
+                if (ongoing) addAction(R.drawable.ic_mic, "暂停", pause)
+            }
+        if (ongoing) OngoingActivity.Builder(this, 1, builder)
+            .setStaticIcon(R.drawable.ic_mic).setTouchIntent(open).build().apply(this)
+        return builder.build()
     }
     override fun onDestroy() {
         handler.removeCallbacks(monitor); stopping = true

@@ -5,6 +5,8 @@ import android.hardware.Sensor
 import android.hardware.SensorEvent
 import android.hardware.SensorEventListener
 import android.hardware.SensorManager
+import android.os.Bundle
+import dev.watchmemory.recording.presentation.RotaryScrollView
 import android.os.SystemClock
 import android.view.Gravity
 import android.widget.TextView
@@ -18,12 +20,23 @@ import java.io.IOException
 /** Foreground comparison session. Only the standard sensor has documented on/off semantics. */
 class WearSignalActivity : Activity(), SensorEventListener {
     private val sensors by lazy { getSystemService(SensorManager::class.java) }
-    private val status by lazy { TextView(this).apply { gravity = Gravity.CENTER; setPadding(36, 20, 36, 20) } }
+    private val status by lazy {
+        TextView(this).apply {
+            gravity = Gravity.CENTER
+            val inset = (32 * resources.displayMetrics.density).toInt()
+            setPadding(inset, inset, inset, inset)
+        }
+    }
     private val latest = linkedMapOf<String, String>()
     private var candidate = WearStartCandidate()
     private var count = 0
     private var loggingFailed = false
     private var active = false
+
+    override fun onCreate(savedInstanceState: Bundle?) {
+        super.onCreate(savedInstanceState)
+        setContentView(RotaryScrollView(this).apply { isFillViewport = true; addView(status) })
+    }
 
     override fun onResume() {
         super.onResume()
@@ -33,7 +46,6 @@ class WearSignalActivity : Activity(), SensorEventListener {
         candidate = WearStartCandidate()
         count = 0
         latest.clear()
-        setContentView(status)
         val all = sensors.getSensorList(Sensor.TYPE_ALL)
         for ((type, name) in listOf(Sensor.STRING_TYPE_LOW_LATENCY_OFFBODY_DETECT to "标准",
                 "com.samsung.sensor.low_power_offbody_detector" to "三星")) {
