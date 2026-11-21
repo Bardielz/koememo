@@ -1,6 +1,5 @@
 package dev.watchmemory.recording.infrastructure.android
 
-import dev.koememo.telemetry.BatteryTelemetry
 import android.Manifest
 import android.app.*
 import android.content.Intent
@@ -12,17 +11,15 @@ import dev.watchmemory.MainActivity
 import dev.watchmemory.bootstrap.AppGraph
 import dev.watchmemory.recording.domain.*
 import dev.watchmemory.recording.application.*
-import dev.watchmemory.recording.infrastructure.audio.CaptureEngine
 import dev.watchmemory.recording.infrastructure.storage.*
 
 /** Android lifecycle adapter: foreground notification, wake lock, worker and timer ownership. */
-open class RecordingService : Service(), CaptureEngine.Observer {
+open class RecordingService : Service(), CaptureObserver {
     private val graph by lazy { AppGraph.get(this) }
-    private val batteryTelemetry by lazy { BatteryTelemetry(this) }
     private val runtime get() = graph.runtime
     private val sessions get() = graph.sessions
     private val handler = Handler(Looper.getMainLooper())
-    private var engine: CaptureEngine? = null
+    @Volatile private var stopping = false
     private var wakeLock: PowerManager.WakeLock? = null
     private var failureFields: Map<String, Any> = emptyMap()
     private var ending = false
@@ -57,7 +54,7 @@ open class RecordingService : Service(), CaptureEngine.Observer {
                 if (stopReason == null) wakeLock?.acquire(180_000L)
                 log("telemetry", mapOf("battery_percent" to resourcesState.batteryPercent, "dbfs" to runtime.db,
                     "frames" to runtime.frames, "system_silenced" to runtime.muted, "free_bytes" to resourcesState.freeBytes,
-                    "thermal_status" to getSystemService(PowerManager::class.java).currentThermalStatus) + batteryTelemetry.snapshot())
+                    "thermal_status" to getSystemService(PowerManager::class.java).currentThermalStatus) + graph.telemetry.snapshot())
                 lastTelemetry = now
             }
             if (runtime.status != lastNotice) {
@@ -105,7 +102,7 @@ open class RecordingService : Service(), CaptureEngine.Observer {
                 "unprocessed_supported" to graph.settings.rawSupported, "model" to Build.MODEL,
                 "sdk" to Build.VERSION.SDK_INT, "abis" to Build.SUPPORTED_ABIS.joinToString(),
                 "app_version" to (packageInfo.versionName ?: "unknown"), "app_version_code" to packageInfo.longVersionCode,
-                "diagnostics_enabled" to diagnosticEnabled) + batteryTelemetry.snapshot())
+                "diagnostics_enabled" to diagnosticEnabled) + graph.telemetry.snapshot())
             lastResources = SystemClock.elapsedRealtime(); lastTelemetry = lastResources
             runtime.startedAt = SystemClock.elapsedRealtime(); runtime.lastFrameAt = runtime.startedAt
             lastLoudAt = runtime.startedAt; runtime.frames = 0; runtime.muted = false
@@ -116,14 +113,14 @@ open class RecordingService : Service(), CaptureEngine.Observer {
             fun reportDiagnostics(final: Boolean) {
                 if (diagnosticEnabled) sessions.recordEvent("performance", diagnostics.snapshot() + ("final" to final) + ("run" to plan.runId))
             }
-            val capture = CaptureEngine(this, config.source, config.sampleRate, config.encoding, config.bitrate,
-                diagnostics, { reportDiagnostics(false) })
-            engine = capture; handler.post(monitor)
+            stopping = false
+            val request = CaptureRequest(config, this, diagnostics, { reportDiagnostics(false) }, { stopping }, graph.settings.requiredBackend)
+            handler.post(monitor)
             Thread({
                 var failure: String? = null
                 try {
                     val writer = recordingStage("WRITER_CREATE") { graph.writerFactory.create(plan) }
-                    DiagnosticRecordingWriter(writer, diagnostics).use { capture.record(it) }
+                    DiagnosticRecordingWriter(writer, diagnostics).use { graph.captureBackends.record(request, it) }
                 }
                 catch (e: Exception) { failureFields = errorEvidence(e, "CAPTURE_SETUP_OR_CLEANUP"); failure = "录音异常：${FailureEvidence.message(e)}" }
                 try { reportDiagnostics(true) } catch (e: Exception) {
@@ -152,17 +149,16 @@ open class RecordingService : Service(), CaptureEngine.Observer {
     private fun requestStop(reason: String) {
         if (stopReason != null) return
         sessions.requestStop(ending)
-        stopReason = reason; runtime.status = "正在保存…"; engine?.requestStop()
+        stopReason = reason; runtime.status = "正在保存…"; stopping = true
     }
     private fun complete(error: String?) {
         handler.removeCallbacks(monitor)
         var finalStatus = error ?: stopReason ?: "录音已停止"
         try {
             sessions.complete(finalStatus, mapOf("duration_ms" to (if (runtime.busy) SystemClock.elapsedRealtime() - runtime.startedAt else 0),
-                "frames" to runtime.frames, "battery_percent" to readResources().batteryPercent) + batteryTelemetry.snapshot() + failureFields, error != null, ending)
+                "frames" to runtime.frames, "battery_percent" to readResources().batteryPercent) + graph.telemetry.snapshot() + failureFields, error != null, ending)
         } catch (e: Exception) { finalStatus = "保存状态失败：${e.message}" }
         finally {
-            engine = null
             if (wakeLock?.isHeld == true) wakeLock?.release()
             wakeLock = null; runtime.status = finalStatus; runtime.busy = false
             stopForeground(STOP_FOREGROUND_REMOVE)
@@ -191,7 +187,7 @@ open class RecordingService : Service(), CaptureEngine.Observer {
             }.build()
     }
     override fun onDestroy() {
-        handler.removeCallbacks(monitor); engine?.requestStop()
+        handler.removeCallbacks(monitor); stopping = true
         if (wakeLock?.isHeld == true) wakeLock?.release()
         super.onDestroy()
     }

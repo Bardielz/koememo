@@ -68,6 +68,20 @@ open class SettingsActivity : Activity() {
                 setOnCheckedChangeListener { _, value -> change { settings.setDiagnostics(value) } }
             })
             label("采集录音性能与同步耗电统计。下次录音或同步尝试生效。")
+            label("录音后端")
+            val backends = RadioGroup(this).apply { column.addView(this) }
+            val selected = settings.requiredBackend
+            val available = graph.captureBackends.availableIds(settings.configuration())
+            (listOf(null) + available + listOfNotNull(selected)).distinct().forEach { id ->
+                val option = RadioButton(this).apply {
+                    this.id = View.generateViewId()
+                    text = id ?: "自动选择"
+                    isEnabled = !graph.state.busy && (id == null || id in available)
+                    backends.addView(this)
+                    isChecked = selected == id
+                }
+                option.setOnClickListener { change { settings.setBackend(id) } }
+            }
             label("采样率")
             val rates = RadioGroup(this).apply { column.addView(this) }
             ExperimentPolicy.sampleRates.forEach { rate ->

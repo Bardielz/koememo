@@ -1,15 +1,16 @@
-package dev.watchmemory
+package dev.watchmemory.transfer
 
-import com.google.android.gms.tasks.Tasks
-import com.google.android.gms.wearable.*
+import android.content.Context
 import dev.koememo.sync.*
 import dev.koememo.telemetry.SyncMetrics
+import dev.koememo.telemetry.TelemetrySource
 import org.json.JSONObject
 import java.io.*
 
-class AudioTransferService : WearableListenerService() {
+class AudioTransferSession(private val context: Context, private val diagnosticsEnabled: Boolean,
+    private val telemetry: TelemetrySource) {
     private fun catalog(): List<Pair<Segment,File>> = buildList {
-        for (dir in File(filesDir, "recordings").listFiles().orEmpty().sortedBy { it.name }) {
+        for (dir in File(context.filesDir, "recordings").listFiles().orEmpty().sortedBy { it.name }) {
             val events = File(dir, "events.jsonl")
             if (!events.isFile) continue
             events.useLines { lines -> lines.forEach { line ->
@@ -22,15 +23,14 @@ class AudioTransferService : WearableListenerService() {
             } }
         }
     }
-    override fun onChannelOpened(channel: ChannelClient.Channel) {
-        val client = Wearable.getChannelClient(this)
+    fun serve(channel: TransferChannel) {
         val timer = java.util.Timer(true)
         val progress = TransferProgress(android.os.SystemClock::elapsedRealtime)
         val session = channel.path.removePrefix("$CHANNEL/").takeIf {
             it.matches(Regex("[0-9a-f-]{36}"))
         }
-        val metrics = if (dev.watchmemory.bootstrap.AppGraph.get(this).settings.diagnosticsEnabled)
-            SyncMetrics(this, "watch", session ?: "legacy") else null
+        val metrics = if (diagnosticsEnabled)
+            SyncMetrics(context, "watch", session ?: "legacy", telemetry) else null
         var outcome = "interrupted"
         val timedOut = java.util.concurrent.atomic.AtomicBoolean(false)
         fun details() = "session=${session ?: "legacy"} side=watch stage=${progress.stage} segment=${progress.segment} bytes=${progress.bytes}"
@@ -40,14 +40,14 @@ class AudioTransferService : WearableListenerService() {
                     android.util.Log.w("KoeMemoSync", "${details()} reason=idle_timeout")
                     timedOut.set(true)
                     cancel()
-                    client.close(channel)
+                    channel.close()
                 }
             }
         }, 5_000L, 5_000L)
         try {
             require(channel.path == CHANNEL || session != null && channel.path == "$CHANNEL/$session")
-            val output = DataOutputStream(Tasks.await(client.getOutputStream(channel)).buffered())
-            val input = DataInputStream(Tasks.await(client.getInputStream(channel)).buffered())
+            val output = DataOutputStream(channel.output().buffered())
+            val input = DataInputStream(channel.input().buffered())
             metrics?.enter("catalog")
             progress.enter("catalog")
             val entries = catalog()
@@ -74,7 +74,7 @@ class AudioTransferService : WearableListenerService() {
                 metrics?.enter("ack")
                 progress.enter("ack")
                 require(input.readUTF() == entry.hash)
-                check(getSharedPreferences("sync_receipts", MODE_PRIVATE).edit()
+                check(context.getSharedPreferences("sync_receipts", Context.MODE_PRIVATE).edit()
                     .putBoolean(channel.nodeId + "/" + entry.hash, true).commit())
                 metrics?.confirmed(offset, entry.size)
             }
@@ -85,7 +85,7 @@ class AudioTransferService : WearableListenerService() {
             android.util.Log.w("KoeMemoSync","${details()} reason=${e.javaClass.simpleName}", e)
         } finally {
             timer.cancel()
-            try { client.close(channel) } finally {
+            try { channel.close() } finally {
                 metrics?.finish(if (timedOut.get()) "idle_timeout" else outcome)
             }
         }

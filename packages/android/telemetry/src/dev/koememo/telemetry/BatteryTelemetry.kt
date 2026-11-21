@@ -6,9 +6,9 @@ import android.content.IntentFilter
 import android.os.BatteryManager
 
 /** Low-frequency snapshot; missing values are omitted, never represented as zero. */
-class BatteryTelemetry(private val context: Context) {
+class BatteryTelemetry(private val context: Context) : TelemetrySource {
     private val manager = context.getSystemService(BatteryManager::class.java)
-    fun snapshot(): Map<String, Any> = buildMap {
+    override fun snapshot(): Map<String, Any> = buildMap {
         fun property(key: String, id: Int) {
             val value = manager.getIntProperty(id)
             if (value != Int.MIN_VALUE) put(key, value)

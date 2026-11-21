@@ -14,6 +14,11 @@ import dev.watchmemory.recording.infrastructure.audio.AndroidRecordingPlayback
 class AppGraph private constructor(context: Context) {
     private val exitEvidence = dev.watchmemory.recording.infrastructure.android.ProcessExitEvidence(context)
     fun processExitEvidence() = exitEvidence.snapshot()
+    val captureBackends = CaptureBackends(
+        WatchDevice(android.os.Build.MANUFACTURER, android.os.Build.MODEL, android.os.Build.VERSION.SDK_INT),
+        listOf(dev.watchmemory.recording.infrastructure.audio.AndroidCaptureBackend())
+    )
+    val telemetry = dev.koememo.telemetry.DeviceTelemetry.android(context)
     val runtime = RecordingRuntime()
     val state: RecordingReadModel get() = runtime
     val repository = FileRecordingRepository(context)

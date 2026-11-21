@@ -3,12 +3,15 @@ package dev.watchmemory.recording.application
 import dev.watchmemory.recording.domain.*
 
 data class ExperimentOptions(val enabled: Boolean = false, val source: String = "MIC", val sampleRate: Int = 16000,
-    val encoding: String = "AAC", val aacBitrate: Int = 48000, val opusBitrate: Int = 24000, val diagnostics: Boolean = false)
+    val encoding: String = "AAC", val aacBitrate: Int = 48000, val opusBitrate: Int = 24000, val diagnostics: Boolean = false,
+    val backend: String? = null)
 interface SettingsRepository { fun load(): ExperimentOptions; fun save(value: ExperimentOptions) }
 class RecordingSettings(private val repository: SettingsRepository, private val state: RecordingReadModel, val rawSupported: Boolean) {
     val experimentsEnabled get() = repository.load().enabled
     val diagnosticsEnabled get() = repository.load().let { it.enabled && it.diagnostics }
     val selectedDiagnostics get() = repository.load().diagnostics
+    val requiredBackend get() = repository.load().let { if (it.enabled) it.backend else null }
+    fun setBackend(id: String?) = change { it.copy(backend = id) }
     val selectedSource get() = repository.load().source
     val selectedSampleRate get() = repository.load().sampleRate
     val selectedEncoding get() = RecordingEncoding.effective(true, repository.load().encoding)

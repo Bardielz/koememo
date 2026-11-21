@@ -2,36 +2,34 @@ package dev.watchmemory.recording.infrastructure.audio
 
 import dev.watchmemory.recording.domain.*
 import dev.watchmemory.recording.application.*
-import android.annotation.SuppressLint
 import android.media.*
 import android.os.SystemClock
 import java.io.IOException
 import kotlin.math.*
 
-class CaptureEngine(private val observer: Observer, private val source: RecordingSource, private val sampleRate: Int, private val encoding: RecordingEncoding, private val bitrate: Int,
-    private val diagnostics: RecordingDiagnostics, private val reportDiagnostics: () -> Unit) {
-    interface Observer {
-        fun configured(fields: Map<String, Any>)
-        fun level(db: Double)
-        fun frames(count: Int)
-        fun silenced(value: Boolean)
+class AndroidCaptureBackend(
+    override val id: String = "android.media",
+    private val matchesDevice: (WatchDevice) -> Boolean = { true },
+    private val acceptsConfiguration: (RecordingConfiguration) -> Boolean = { true },
+    private val openInput: (RecordingSource, Int) -> PcmInput = ::androidPcmInput,
+    private val findEncoder: (MediaFormat) -> String? = { format ->
+        MediaCodecList(MediaCodecList.REGULAR_CODECS).findEncoderForFormat(format)
     }
-    @Volatile private var running = true
-    fun requestStop() { running = false }
+) : CaptureBackend {
+    override fun matches(device: WatchDevice) = matchesDevice(device)
+    override fun supports(configuration: RecordingConfiguration) = acceptsConfiguration(configuration)
 
-    @SuppressLint("MissingPermission") // Permission checked by visible activity and service.
-    fun record(writer: RecordingWriter) {
-        var mic: AudioRecord? = null
+    override fun record(request: CaptureRequest, writer: RecordingWriter) {
+        val (source, sampleRate, encoding, bitrate) = request.configuration
+        val observer = request.observer
+        val diagnostics = request.diagnostics
+        var mic: PcmInput? = null
         var codec: MediaCodec? = null
         var codecStarted = false
         var micStarted = false
         var primaryFailure: Throwable? = null
         try {
-            val minimum = AudioRecord.getMinBufferSize(sampleRate, AudioFormat.CHANNEL_IN_MONO, AudioFormat.ENCODING_PCM_16BIT)
-            check(minimum > 0) { "Microphone does not support $sampleRate Hz" }
-            mic = AudioRecord(AudioFormats.sourceId(source), sampleRate, AudioFormat.CHANNEL_IN_MONO,
-                AudioFormat.ENCODING_PCM_16BIT, max(minimum * 2, sampleRate * 2))
-            check(mic.state == AudioRecord.STATE_INITIALIZED) { "Microphone initialization failed" }
+            mic = openInput(source, sampleRate)
             check(mic.sampleRate == sampleRate) { "Unexpected client sample rate: ${mic.sampleRate}" }
             // Read 128 ms at a time even when the codec accepts smaller input buffers.
             val pcm = ByteArray(sampleRate * 2 * 128 / 1000)
@@ -40,18 +38,17 @@ class CaptureEngine(private val observer: Observer, private val source: Recordin
                 setInteger(MediaFormat.KEY_BIT_RATE, bitrate)
                 setInteger(MediaFormat.KEY_MAX_INPUT_SIZE, pcm.size)
             }
-            val encoderName = MediaCodecList(MediaCodecList.REGULAR_CODECS).findEncoderForFormat(format)
+            val encoderName = findEncoder(format)
                 ?: error("设备不支持 ${encoding.name} / $sampleRate Hz / $bitrate bps")
             codec = MediaCodec.createByCodecName(encoderName)
             codec.configure(format, null, null, MediaCodec.CONFIGURE_FLAG_ENCODE)
             codec.start()
             codecStarted = true
-            mic.startRecording()
+            mic.start()
             micStarted = true
-            check(mic.recordingState == AudioRecord.RECORDSTATE_RECORDING) { "Microphone did not start" }
-            observer.configured(mapOf("requested_sample_rate" to sampleRate,
+            observer.configured(mapOf("capture_backend" to id, "requested_sample_rate" to sampleRate,
                 "client_sample_rate" to mic.sampleRate,
-                "device_sample_rate" to (mic.activeRecordingConfiguration?.format?.sampleRate ?: 0),
+                "device_sample_rate" to (mic.deviceSampleRate ?: 0),
                 "audio_record_buffer_frames" to mic.bufferSizeInFrames,
                 "pcm_batch_bytes" to pcm.size, "encoder" to codec.name, "encoding" to encoding.name, "target_bitrate" to bitrate,
                 "encoder_software_only" to codec.codecInfo.isSoftwareOnly,
@@ -70,11 +67,11 @@ class CaptureEngine(private val observer: Observer, private val source: Recordin
             var deadline = Long.MAX_VALUE
             val info = MediaCodec.BufferInfo()
             while (!outputEnded) {
-                if (!running && deadline == Long.MAX_VALUE) deadline = SystemClock.elapsedRealtime() + 5000
+                if (request.stopping() && deadline == Long.MAX_VALUE) deadline = SystemClock.elapsedRealtime() + 5000
                 check(SystemClock.elapsedRealtime() <= deadline) { "Encoder drain timed out" }
                 if (!inputEnded) {
-                    if (offset == pending && running) {
-                        pending = diagnostics.measure(RecordingStage.CAPTURE_READ) { mic.read(pcm, 0, pcm.size, AudioRecord.READ_BLOCKING) }
+                    if (offset == pending && !request.stopping()) {
+                        pending = diagnostics.measure(RecordingStage.CAPTURE_READ) { mic.read(pcm) }
                         offset = 0
                         if (pending <= 0 || pending % 2 != 0) throw IOException("Microphone read error: $pending")
                         val now = SystemClock.elapsedRealtime()
@@ -96,7 +93,7 @@ class CaptureEngine(private val observer: Observer, private val source: Recordin
                             val input = checkNotNull(codec.getInputBuffer(slot))
                             input.clear()
                             val count = min(pending - offset, input.remaining()) and -2
-                            check(count > 0 || (!running && offset == pending)) { "Encoder input buffer too small" }
+                            check(count > 0 || (request.stopping() && offset == pending)) { "Encoder input buffer too small" }
                             if (count > 0) input.put(pcm, offset, count)
                             codec.queueInputBuffer(slot, 0, count, samples * 1_000_000 / sampleRate,
                                 if (count == 0) MediaCodec.BUFFER_FLAG_END_OF_STREAM else 0)
@@ -136,10 +133,10 @@ class CaptureEngine(private val observer: Observer, private val source: Recordin
                 if (produced > 0) observer.frames(produced)
                 val now = SystemClock.elapsedRealtime()
                 if (now - lastCheck >= 5000) {
-                    mic.activeRecordingConfiguration?.let { observer.silenced(it.isClientSilenced) }
+                    mic.silenced?.let(observer::silenced)
                     lastCheck = now
                 }
-                if (now - lastDiagnostics >= 60000) { reportDiagnostics(); lastDiagnostics = now }
+                if (now - lastDiagnostics >= 60000) { request.reportDiagnostics(); lastDiagnostics = now }
                 if (now - lastSync >= 30000) { writer.sync(); lastSync = now }
             }
         } catch (error: Throwable) {

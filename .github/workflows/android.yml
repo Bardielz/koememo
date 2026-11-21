@@ -36,6 +36,8 @@ jobs:
         run: sdkmanager 'platforms;android-35' 'build-tools;35.0.0'
       - name: Test export and audio validation
         run: python3 -m unittest discover -s tools/audio -p 'test_*.py' -v
+      - name: Build standalone watch without Google Data Layer
+        run: apps/watch/wearos/gradlew -p apps/watch/wearos --no-daemon -PwearDataLayer=false :app:assembleDebug --console=plain
       - name: Build APK, unit tests and Android Lint
         run: apps/watch/wearos/gradlew -p apps/watch/wearos --no-daemon assembleDebug testDebugUnitTest :recording:domain:test :recording:application:test lintDebug --console=plain
       - name: Prepare CI APK and checksums
