@@ -1,6 +1,6 @@
 # KoeMemo
 
-Kotlin 原生 Wear OS 本地录音应用，面向 Galaxy Watch5 等手表。支持熄屏录音、连续分段保存，以及音源、采样率和编码格式的实验对比。
+KoeMemo 由 Kotlin 原生手表端和安卓手机端组成。手表负责熄屏录音和分段保存，手机可同步、播放和导出已保存的片段。手表端采用标准 Android 音频接口，Galaxy Watch5 是目前的主要验证设备。
 
 当前开发版本 **0.1.7-dev**，处于设备验证阶段。KoeMemo 是原「随声记 / WatchMemory」项目的新名称；保留应用 ID `dev.watchmemory`，以兼容原有应用数据和更新路径。
 
@@ -14,6 +14,8 @@ Kotlin 原生 Wear OS 本地录音应用，面向 Galaxy Watch5 等手表。支�
 - 电量低于 9%、空间不足 256 MiB 或超过 30 秒无编码数据时停止并保存。
 - 本地存储。配对安卓手机可通过 [手机端](apps/phone/README.md) 同步已保存片段并播放。
 
+手表主页、设置页和同步统计页支持旋转输入。可用 Galaxy Watch5 的触控表圈上下滚动，也可滑动屏幕。
+
 ## 实验设置
 
 主界面下滑进入 **设置 → 实验功能**。总开关默认关闭；只能在暂停后修改，下次开始或继续录音时生效。
@@ -26,6 +28,10 @@ Kotlin 原生 Wear OS 本地录音应用，面向 Galaxy Watch5 等手表。支�
 | 目标码率 | AAC 32 / 48 kbps；Opus 24 / 32 kbps | 48 kbps |
 
 `UNPROCESSED` 仅在系统明确声明支持时可选。不支持的采集或编码配置在启动时明确报错，不静默换成另一种编码。采样率是应用请求值，设备内部仍可能重采样，不能据此断言麦克风 ADC 的原生采样率。
+
+**录音后端**默认自动选择，也可在实验设置中指定已注册的后端，对照测试采集行为。
+
+**佩戴触发对照**在页面可见期间监听可用的佩戴传感器。摘下再戴上会在标准传感器产生有效状态变化时记为一次候选事件，麦克风仍由用户手动启动。事件写入 `files/diagnostics/wear-signals.jsonl`。详见[手表能力适配](docs/watch-backends.md)。
 
 每次只启用一种配置，不做三路同时录音。实验功能关闭后仍保留选择，便于再次开启。
 
@@ -139,7 +145,7 @@ docs/               # 架构与变更记录
 
 ## 自动构建与发布
 
-[GitHub Actions](https://github.com/Bardielz/koememo/actions) 在推送 master、提交 PR、推送 `v*` 标签或手动触发时执行：Python 测试 → APK 构建 → Kotlin 单元测试 → Android Lint。成功后可下载 `koememo-ci-debug`，测试报告单独保存，保留 14 天。
+[GitHub Actions](https://github.com/Bardielz/koememo/actions) 在推送 master、提交 PR、推送 `v*` 标签或手动触发时执行：Python 测试 → APK 构建 → Kotlin 单元测试 → Android Lint。需要同时安装手表端与手机端时，下载同一次构建的 `koememo-paired-debug`。单独的手表测试包和校验文件在 `koememo-ci-debug` 中，测试报告在 `verification-reports` 中。
 
 推送与 `versionName` 一致的标签（例如 `v0.1.4`）会在检查通过后创建预发布 Release 并附上 CI APK 与校验信息；已有同名附件不会覆盖。普通分支构建不会发布 Release。工作流不上传 GitHub Packages，因为此项目交付的是手表安装包，而非 Maven 依赖库。
 
