@@ -1,5 +1,6 @@
 package dev.watchmemory.recording.presentation.settings
 
+import dev.watchmemory.recording.presentation.RotaryScrollView
 import dev.watchmemory.bootstrap.AppGraph
 import dev.watchmemory.recording.application.RecordingSettings
 import dev.watchmemory.recording.domain.*
@@ -27,7 +28,7 @@ open class SettingsActivity : Activity() {
             gravity = Gravity.CENTER_HORIZONTAL
             setPadding(dp(30), dp(28), dp(30), dp(40))
         }
-        scroll = ScrollView(this).apply { addView(column) }
+        scroll = RotaryScrollView(this).apply { addView(column) }
         setContentView(scroll)
         scroll?.post { scroll?.scrollTo(0, position) }
         fun label(text: String) = TextView(this).apply {
@@ -121,7 +122,7 @@ open class SettingsActivity : Activity() {
             label("关闭实验功能后使用 MIC / 16 kHz / AAC 48 kbps。开始时检查配置，不支持会报错。Opus 的播放时间基准为 48 kHz，与采集采样率分别记录。")
         }
         if (settings.experimentsEnabled) label("实验音源每次只启用一种。所有实验功能均受上方总开关控制。")
-        column.addView(Button(this).apply { text = "查看同步统计"; setOnClickListener { dev.koememo.telemetry.showSyncHistory(this@SettingsActivity) } })
+        column.addView(Button(this).apply { text = "查看同步统计"; setOnClickListener { startActivity(android.content.Intent(this@SettingsActivity, SyncHistoryActivity::class.java)) } })
         toggle.setOnCheckedChangeListener { _, enabled -> change { settings.setExperiments(enabled) } }
         column.addView(Button(this).apply { text = "返回"; setOnClickListener { finish() } })
     }
