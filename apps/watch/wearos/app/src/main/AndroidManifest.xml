@@ -11,6 +11,7 @@
         <activity android:taskAffinity="" android:name=".MainActivity" android:exported="true">
             <intent-filter><action android:name="android.intent.action.MAIN" /><category android:name="android.intent.category.LAUNCHER" /></intent-filter>
         </activity>
+        <activity android:name=".recording.presentation.settings.WearSignalActivity" android:exported="false" />
         <activity android:name=".SettingsActivity" android:exported="false" />
         <service android:name=".RecordingService" android:exported="false" android:foregroundServiceType="microphone" android:stopWithTask="false" />
     </application>
