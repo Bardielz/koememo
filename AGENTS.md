@@ -7,5 +7,6 @@
 - Never develop or commit directly on master. Make focused, descriptive commits, push the working branch, and open a PR targeting master.
 - Run checks appropriate to the change; require the GitHub build checks to pass before merging. Do not bypass failures or force-push shared branches.
 - A request to develop or upload does not alone authorize merging a PR or publishing a release. Follow explicit user authorization for those actions.
+- After each merge to master, review README.md against the merged behavior. Include necessary updates in the original PR when possible, or open a focused follow-up PR for any gaps.
 - Keep signing keys, credentials, recordings, exports, device evidence and generated artifacts out of Git.
 - Wear OS source is in apps/watch/wearos; tooling is in tools; phone and desktop clients have reserved directories under apps.

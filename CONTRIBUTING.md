@@ -23,6 +23,8 @@ git push -u origin feature/<name>
 gh pr create --base master
 ```
 
+每次合并到 `master` 后，对照合入的改动复核主 README。功能、使用步骤、构建、安装或下载方式有变化时，尽量在原 PR 同步更新，合并后发现遗漏则开文档 PR 补齐。现有说明仍准确时无需改动。
+
 ## Wear OS 验证
 
 在仓库根目录执行：
