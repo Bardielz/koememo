@@ -9,6 +9,8 @@ import android.os.Bundle
 import dev.watchmemory.recording.presentation.RotaryScrollView
 import android.os.SystemClock
 import android.view.Gravity
+import android.widget.Button
+import android.widget.LinearLayout
 import android.widget.TextView
 import android.util.Log
 import dev.watchmemory.bootstrap.AppGraph
@@ -35,7 +37,16 @@ class WearSignalActivity : Activity(), SensorEventListener {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        setContentView(RotaryScrollView(this).apply { isFillViewport = true; addView(status) })
+        val content = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            gravity = Gravity.CENTER
+            addView(status)
+            addView(Button(this@WearSignalActivity).apply {
+                text = "返回"
+                setOnClickListener { finish() }
+            })
+        }
+        setContentView(RotaryScrollView(this).apply { isFillViewport = true; addView(content) })
     }
 
     override fun onResume() {
