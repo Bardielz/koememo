@@ -58,13 +58,13 @@ open class MainActivity : Activity() {
         timer = label("00:00:00", 27f, Color.WHITE).apply { typeface = Typeface.MONOSPACE }
         state = label("准备记录", 13f, Color.LTGRAY)
         fun button(text: String, primary: Boolean = false, action: () -> Unit): Button = Button(this).apply {
-            this.text = text; textSize = 14f; isAllCaps = false; minHeight = dp(44)
+            this.text = text; textSize = 14f; isAllCaps = false; minHeight = dp(48)
             setTextColor(if (primary) Color.rgb(8, 30, 27) else Color.WHITE)
             background = GradientDrawable().apply {
                 cornerRadius = dp(23).toFloat()
                 setColor(if (primary) Color.rgb(126, 226, 198) else Color.rgb(32, 42, 55))
             }
-            column.addView(this, LinearLayout.LayoutParams(-1, dp(46)).apply { topMargin = dp(7) })
+            column.addView(this, LinearLayout.LayoutParams(-1, -2).apply { topMargin = dp(7) })
             setOnClickListener { action() }
         }
         main = button("开始记录", true) {
@@ -112,11 +112,11 @@ open class MainActivity : Activity() {
         settingsButton.isEnabled = !active
         val saved = graph.sessions.saved()
         val hasSession = saved.sessionId != null
-        state.text = if (active) graph.state.status else saved.status
+        state.updateText(if (active) graph.state.status else saved.status)
         state.setTextColor(if (graph.state.muted && active) Color.rgb(255, 180, 110) else Color.LTGRAY)
         val seconds = if (active) (SystemClock.elapsedRealtime() - graph.state.startedAt) / 1000 else 0
-        timer.text = String.format(Locale.US, "%02d:%02d:%02d", seconds / 3600, seconds / 60 % 60, seconds % 60)
-        main.text = if (active) "暂停录音" else if (hasSession) "继续记录" else "开始记录"
+        timer.updateText(String.format(Locale.US, "%02d:%02d:%02d", seconds / 3600, seconds / 60 % 60, seconds % 60))
+        main.updateText(if (active) "暂停录音" else if (hasSession) "继续记录" else "开始记录")
         main.isEnabled = graph.state.status != "正在保存…"
         mark.visibility = if (active) View.VISIBLE else View.GONE
         mark.isEnabled = main.isEnabled
@@ -134,10 +134,14 @@ open class MainActivity : Activity() {
             deviceStats = UiText.deviceStats(battery, filesDir.usableSpace)
             lastStats = SystemClock.elapsedRealtime()
         }
-        detail.text = deviceStats +
-            if (active) "音量 %.0f dBFS\n本段运行计时 · 可熄屏".format(graph.state.db) else "$fileSummary\n录音可通过 Mac 导出"
+        detail.updateText(deviceStats +
+            if (active) "音量 %.0f dBFS\n本段运行计时 · 可熄屏".format(graph.state.db) else "$fileSummary\n录音可通过 Mac 导出")
         playback.isEnabled = latestFile != null
     }
+    private fun TextView.updateText(value: String) {
+        if (!android.text.TextUtils.equals(text, value)) text = value
+    }
+
     private fun playLatest() {
         if (graph.playback.isPlaying) { stopPlayback(); return }
         val file = latestFile ?: return
