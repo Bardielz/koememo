@@ -35,6 +35,25 @@ class TransferTest {
         time++
         assertTrue(progress.expired(180_000))
     }
+    @Test fun resumesPartialThenMissingBeforeAuditingReceipts() {
+        val root = java.nio.file.Files.createTempDirectory("resume").toFile()
+        try {
+            val dir = File(root, "session").apply { mkdir() }
+            val saved = File(dir, "saved.ogg").apply { writeText("ok") }
+            val hash = saved.sha256()
+            fun entry(index: Int, name: String) = PendingSegment(index, Segment("session", name, 2, hash), root, true)
+            File(dir, "partial.ogg.$hash.part").writeText("o")
+            val entries = listOf(entry(0, "saved.ogg"), entry(1, "missing.ogg"), entry(2, "partial.ogg"))
+            assertEquals(listOf(2, 1, 0), entries.sortedBy { it.priority }.map { it.index })
+            assertTrue(entries[0].verified())
+            assertFalse(entries[1].verified())
+            saved.writeText("xx")
+            assertFalse(entries[0].verified())
+        } finally {
+            root.deleteRecursively()
+        }
+    }
+
     @Test fun rejectsPathsOutsideLibrary() {
         assertThrows(IllegalArgumentException::class.java) { Segment("session","../x.ogg",7,"a".repeat(64)) }
     }

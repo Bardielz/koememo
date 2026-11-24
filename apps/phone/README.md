@@ -59,3 +59,5 @@ adb -s "$SERIAL" shell dumpsys batterystats dev.watchmemory
 ```
 
 系统给 UID 的 CPU、audio 等分类为归因估算，可能包含录音和同步并行的消耗。框架代为执行的工作也可能计入其他 UID。用应用的阶段耗时、CPU 时间、字节和系统统计交叉分析。调试内存可用 `adb -s "$SERIAL" shell dumpsys meminfo dev.watchmemory` 获取进程 PSS。系统统计字段和硬件电量监测能力依设备而异。
+
+重连时手机先处理带断点的分段，再接收缺失文件，最后核对本地完整文件。支持回执目录的手表会报告当前手机已确认的哈希。手机重新校验本地 SHA-256 后可以复用对应回执；文件缺失或校验失败时仍会接收。旧设备继续使用原通道逐段确认。界面中的序号表示本次处理顺序。

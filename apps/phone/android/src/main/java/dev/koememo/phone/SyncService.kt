@@ -187,7 +187,12 @@ class SyncService : Service() {
         val client = Wearable.getChannelClient(this)
         checkActive()
         val withSession = capabilities[SESSION_CAPABILITY]?.nodes.orEmpty().any { it.id == watch.id }
-        val path = if (withSession) "$CHANNEL/$session" else CHANNEL
+        val withReceipts = capabilities[RECEIPTS_CAPABILITY]?.nodes.orEmpty().any { it.id == watch.id }
+        val path = when {
+            withReceipts -> "$RECEIPTS_CHANNEL/$session"
+            withSession -> "$CHANNEL/$session"
+            else -> CHANNEL
+        }
         enter("open")
         val opening = client.openChannel(watch.id, path)
         val channel = try {
@@ -217,23 +222,39 @@ class SyncService : Service() {
             enter("catalog_header")
             val count = input.readInt(); require(count in 0..100000)
             enter("catalog_entries")
-            val entries = List(count) { Segment.read(input).also { progress.advanced(0) } }
-            entries.forEachIndexed { index, item ->
+            val nodeDirectory = File(File(filesDir, "audio"), watch.id.toByteArray().joinToString("") { "%02x".format(it) })
+            val entries = List(count) { index ->
+                val item = Segment.read(input)
+                val acknowledged = withReceipts && input.readBoolean()
+                progress.advanced(0)
+                PendingSegment(index, item, nodeDirectory, acknowledged)
+            }.sortedBy { it.priority }
+            Log.i("KoeMemoSync", "session=$session receipts=$withReceipts first=${entries.firstOrNull()?.item?.name}")
+            var lastRequest = android.os.SystemClock.elapsedRealtime()
+            var reused = 0
+            entries.forEachIndexed { position, entry ->
+                val item = entry.item
                 checkActive()
                 enter("verify_local")
                 segment = item.name
                 bytes = 0
-                val dir = File(File(File(filesDir, "audio"),watch.id.toByteArray().joinToString("") { "%02x".format(it) }),item.session)
+                val target = entry.target
+                val dir = requireNotNull(target.parentFile)
                 check(dir.isDirectory || dir.mkdirs())
-                val target = File(dir,item.name)
-                val done = target.length() == item.size && target.sha256() == item.hash
-                val part = File(dir,item.name + "." + item.hash + ".part")
+                val done = entry.verified()
+                // A size-offset request also keeps the peer alive during a long local audit.
+                if (done && entry.acknowledged && android.os.SystemClock.elapsedRealtime() - lastRequest < 30_000L) {
+                    reused++
+                    return@forEachIndexed
+                }
+                val part = entry.part
                 if (part.length() > item.size) check(part.delete())
                 val offset = if (done) item.size else part.length()
                 bytes = offset
+                if (position == 0) Log.i("KoeMemoSync", "session=$session first_request=${entry.index} offset=$offset")
                 enter("receive")
-                publish("正在同步 ${index+1}/$count")
-                output.writeInt(index); output.writeLong(offset); output.flush()
+                publish("正在同步 ${position+1}/$count")
+                output.writeInt(entry.index); output.writeLong(offset); output.flush()
                 if (!done) {
                     check(dir.usableSpace > item.size-offset) { "手机存储空间不足" }
                     FileOutputStream(part,true).use {
@@ -252,10 +273,12 @@ class SyncService : Service() {
                 enter("ack")
                 output.writeUTF(item.hash); output.flush()
                 metrics?.confirmed(offset, item.size)
+                lastRequest = android.os.SystemClock.elapsedRealtime()
             }
             output.writeInt(-1); output.flush()
             check(input.readBoolean()) { "手表未确认完成，请重试" }
             enter("completed")
+            Log.i("KoeMemoSync", "session=$session reused_receipts=$reused count=$count")
             return count
         } catch (e: Exception) {
             if (timedOut.get()) throw TimeoutException("手机等待同步进展超时：$stage").apply { initCause(e) }

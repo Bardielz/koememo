@@ -7,6 +7,9 @@ const val CHANNEL = "/koememo/audio/v1"
 const val CAPABILITY = "koememo_audio_v1"
 const val SESSION_CAPABILITY = "koememo_audio_sessions"
 
+const val RECEIPTS_CAPABILITY = "koememo_audio_receipts"
+const val RECEIPTS_CHANNEL = "$CHANNEL/receipts"
+
 data class Segment(val session: String, val name: String, val size: Long, val hash: String) {
     init {
         require(session.matches(Regex("[A-Za-z0-9-]{1,100}")))
