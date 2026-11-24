@@ -25,3 +25,13 @@
 后续接入录音时，采用单独的用户开关和已验证来源。在应用可见、已有麦克风授权并满足现有电量和空间条件时，候选事件可复用现有启动用例；后台候选优先提供通知让用户点按进入。手动暂停、录音中、缺权限和重复事件均应单独验收。摘下后是否暂停作为独立策略处理。
 
 三星性能及健康 SDK 的候选模块、探测顺序和真机验收条件见[接入调研](samsung-sdk.md)。
+
+## 三星性能 SDK 探测
+
+在本地取得官方 Galaxy Performance SDK 后，在手表 Gradle 工程构建时传入 JAR 的绝对路径：
+
+```sh
+./gradlew :app:assembleDebug -PsamsungPerformanceJar=/absolute/path/to/sperf.jar
+```
+
+安装后进入「设置 → 实验功能 → 探测三星性能 SDK」。按钮在录音空闲时可用，后台调用一次初始化并缓存本进程结果。界面区分初始化成功、返回 false、调用异常与构建未包含 SDK。结果写入应用私有的 `files/diagnostics/samsung-performance.jsonl` 和 `KoeMemoSPerf` Logcat 标签。默认构建可独立运行。SDK 文件放在仓库外部。
