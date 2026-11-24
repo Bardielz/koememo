@@ -1,1 +1,20 @@
-<resources><style name="AppTheme" parent="android:style/Theme.Material.NoActionBar"><item name="android:fontFamily">sans</item><item name="android:windowBackground">#080D15</item><item name="android:colorAccent">#7EE2C6</item><item name="android:windowLightStatusBar">false</item></style></resources>
+<resources>
+    <style name="AppTheme" parent="android:style/Theme.Material.NoActionBar">
+        <item name="android:fontFamily">sans</item>
+        <item name="android:windowBackground">#080D15</item>
+        <item name="android:colorAccent">#7EE2C6</item>
+        <item name="android:windowLightStatusBar">false</item>
+        <item name="android:buttonStyle">@style/WatchButton</item>
+        <item name="android:switchStyle">@style/WatchSwitch</item>
+        <item name="android:radioButtonStyle">@style/WatchRadioButton</item>
+    </style>
+    <style name="WatchButton" parent="android:style/Widget.Material.Button">
+        <item name="android:minHeight">48dp</item>
+    </style>
+    <style name="WatchSwitch" parent="android:style/Widget.Material.CompoundButton.Switch">
+        <item name="android:minHeight">48dp</item>
+    </style>
+    <style name="WatchRadioButton" parent="android:style/Widget.Material.CompoundButton.RadioButton">
+        <item name="android:minHeight">48dp</item>
+    </style>
+</resources>

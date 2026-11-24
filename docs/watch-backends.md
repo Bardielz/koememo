@@ -23,3 +23,15 @@
 实机验收时保持对照页可见，分别在佩戴和摘下状态进入页面，再做多轮戴上、摘下、静置和放在充电座的对照。使用应用私有的 `files/diagnostics/wear-signals.jsonl` 对齐同一轮两个来源的传感器时间戳、到达时间和候选次数。以人工操作为基准统计漏报、重复和延迟。熄屏后台交付及离电开销需要另外验证。
 
 后续接入录音时，采用单独的用户开关和已验证来源。在应用可见、已有麦克风授权并满足现有电量和空间条件时，候选事件可复用现有启动用例；后台候选优先提供通知让用户点按进入。手动暂停、录音中、缺权限和重复事件均应单独验收。摘下后是否暂停作为独立策略处理。
+
+三星性能及健康 SDK 的候选模块、探测顺序和真机验收条件见[接入调研](samsung-sdk.md)。
+
+## 三星性能 SDK 探测
+
+在本地取得官方 Galaxy Performance SDK 后，在手表 Gradle 工程构建时传入 JAR 的绝对路径：
+
+```sh
+./gradlew :app:assembleDebug -PsamsungPerformanceJar=/absolute/path/to/sperf.jar
+```
+
+安装后进入「设置 → 实验功能 → 探测三星性能 SDK」。按钮在录音空闲时可用，后台调用一次初始化并缓存本进程结果。界面区分初始化成功、返回 false、调用异常与构建未包含 SDK。结果写入应用私有的 `files/diagnostics/samsung-performance.jsonl` 和 `KoeMemoSPerf` Logcat 标签。默认构建可独立运行。SDK 文件放在仓库外部。

@@ -14,6 +14,7 @@ class AudioTransferSession(private val context: Context, private val diagnostics
             val events = File(dir, "events.jsonl")
             if (!events.isFile) continue
             events.useLines { lines -> lines.forEach { line ->
+                if (!line.contains("segment_closed")) return@forEach
                 val event = runCatching { JSONObject(line) }.getOrNull()
                 if (event?.optString("event") == "segment_closed") {
                     val entry = Segment(dir.name, event.getString("file"), event.getLong("bytes"), event.getString("sha256"))
@@ -26,7 +27,9 @@ class AudioTransferSession(private val context: Context, private val diagnostics
     fun serve(channel: TransferChannel) {
         val timer = java.util.Timer(true)
         val progress = TransferProgress(android.os.SystemClock::elapsedRealtime)
-        val session = channel.path.removePrefix("$CHANNEL/").takeIf {
+        val withReceipts = channel.path.startsWith("$RECEIPTS_CHANNEL/")
+        val prefix = if (withReceipts) RECEIPTS_CHANNEL else CHANNEL
+        val session = channel.path.removePrefix("$prefix/").takeIf {
             it.matches(Regex("[0-9a-f-]{36}"))
         }
         val metrics = if (diagnosticsEnabled)
@@ -45,14 +48,19 @@ class AudioTransferSession(private val context: Context, private val diagnostics
             }
         }, 5_000L, 5_000L)
         try {
-            require(channel.path == CHANNEL || session != null && channel.path == "$CHANNEL/$session")
+            require(channel.path == CHANNEL || session != null && channel.path == "$prefix/$session")
             val output = DataOutputStream(channel.output().buffered())
             val input = DataInputStream(channel.input().buffered())
             metrics?.enter("catalog")
             progress.enter("catalog")
             val entries = catalog()
             output.writeInt(entries.size)
-            entries.forEach { it.first.send(output) }; output.flush()
+            val receipts = context.getSharedPreferences("sync_receipts", Context.MODE_PRIVATE)
+            entries.forEach { (entry, _) ->
+                entry.send(output)
+                if (withReceipts) output.writeBoolean(receipts.getBoolean(channel.nodeId + "/" + entry.hash, false))
+            }
+            output.flush()
             while (true) {
                 metrics?.enter("request")
                 progress.enter("request")
@@ -74,7 +82,7 @@ class AudioTransferSession(private val context: Context, private val diagnostics
                 metrics?.enter("ack")
                 progress.enter("ack")
                 require(input.readUTF() == entry.hash)
-                check(context.getSharedPreferences("sync_receipts", Context.MODE_PRIVATE).edit()
+                check(receipts.edit()
                     .putBoolean(channel.nodeId + "/" + entry.hash, true).commit())
                 metrics?.confirmed(offset, entry.size)
             }

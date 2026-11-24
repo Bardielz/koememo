@@ -1,5 +1,8 @@
 package dev.watchmemory.recording.infrastructure.android
 
+import androidx.core.app.NotificationCompat
+import androidx.wear.ongoing.OngoingActivity
+import dev.watchmemory.surfaces.openRecorder
 import android.Manifest
 import android.app.*
 import android.content.Intent
@@ -7,7 +10,6 @@ import android.content.pm.PackageManager
 import android.content.pm.ServiceInfo
 import android.os.*
 import dev.watchmemory.R
-import dev.watchmemory.MainActivity
 import dev.watchmemory.bootstrap.AppGraph
 import dev.watchmemory.recording.domain.*
 import dev.watchmemory.recording.application.*
@@ -21,6 +23,10 @@ open class RecordingService : Service(), CaptureObserver {
     private val handler = Handler(Looper.getMainLooper())
     @Volatile private var stopping = false
     private var wakeLock: PowerManager.WakeLock? = null
+    private var wakePlan: RecordingPlan? = null
+    private var persistWakeEvents = false
+    private var acquiredAt: Long? = null
+    private val wakeTimeoutMs = 30_000L
     private var failureFields: Map<String, Any> = emptyMap()
     private var ending = false
     private var stopReason: String? = null
@@ -51,7 +57,6 @@ open class RecordingService : Service(), CaptureObserver {
                 RecordingSafety.stop(resourcesState, now - runtime.lastFrameAt)?.let { requestStop(stopText(it)) }
             }
             if (now - lastTelemetry >= 60000) {
-                if (stopReason == null) wakeLock?.acquire(180_000L)
                 log("telemetry", mapOf("battery_percent" to resourcesState.batteryPercent, "dbfs" to runtime.db,
                     "frames" to runtime.frames, "system_silenced" to runtime.muted, "free_bytes" to resourcesState.freeBytes,
                     "thermal_status" to getSystemService(PowerManager::class.java).currentThermalStatus) + graph.telemetry.snapshot())
@@ -107,8 +112,11 @@ open class RecordingService : Service(), CaptureObserver {
             runtime.startedAt = SystemClock.elapsedRealtime(); runtime.lastFrameAt = runtime.startedAt
             lastLoudAt = runtime.startedAt; runtime.frames = 0; runtime.muted = false
             ending = false; stopReason = null; runtime.status = "正在启动录音"; runtime.busy = true
+            wakePlan = plan
+            persistWakeEvents = diagnosticEnabled
             wakeLock = getSystemService(PowerManager::class.java).newWakeLock(
-                PowerManager.PARTIAL_WAKE_LOCK, "watchmemory:recording").apply { setReferenceCounted(false); acquire(180_000L) }
+                PowerManager.PARTIAL_WAKE_LOCK, "watchmemory:recording").apply { setReferenceCounted(false) }
+            acquireWakeLock("startup")
             val diagnostics = RecordingDiagnostics(diagnosticEnabled, AndroidDiagnosticClock, AndroidDiagnosticTrace)
             fun reportDiagnostics(final: Boolean) {
                 if (diagnosticEnabled) sessions.recordEvent("performance", diagnostics.snapshot() + ("final" to final) + ("run" to plan.runId))
@@ -146,8 +154,44 @@ open class RecordingService : Service(), CaptureObserver {
         }
         return fields
     }
+    // All lock transitions and observations run on the service main thread.
+    private fun wakeEvent(action: String, reason: String, now: Long, since: Long?) {
+        val plan = wakePlan ?: return
+        val fields = mutableMapOf<String, Any>("run" to plan.runId, "action" to action,
+            "reason" to reason, "timeout_ms" to wakeTimeoutMs, "observed_elapsed_ms" to now)
+        since?.let { fields["since_acquire_ms"] = now - it }
+        android.util.Log.d("KoeMemoWakeLock", org.json.JSONObject(fields as Map<*, *>).toString())
+        if (persistWakeEvents) try {
+            graph.repository.append(plan.sessionId, "wake_lock", fields)
+        } catch (e: Exception) {
+            android.util.Log.w("KoeMemoWakeLock", "Could not persist wake_lock event", e)
+        }
+    }
+
+    private fun acquireWakeLock(reason: String) {
+        val lock = wakeLock ?: return
+        val now = SystemClock.elapsedRealtime()
+        val held = lock.isHeld
+        val previous = acquiredAt
+        if (!held && previous != null) wakeEvent("observed_unheld", reason, now, previous)
+        lock.acquire(wakeTimeoutMs)
+        acquiredAt = now
+        wakeEvent(if (held) "renew" else "acquire", reason, now, previous)
+    }
+
+    private fun releaseWakeLock(reason: String) {
+        val lock = wakeLock ?: return
+        val previous = acquiredAt ?: return
+        val now = SystemClock.elapsedRealtime()
+        val held = lock.isHeld
+        if (held) lock.release()
+        acquiredAt = null
+        wakeEvent(if (held) "release" else "observed_unheld", reason, now, previous)
+    }
+
     private fun requestStop(reason: String) {
         if (stopReason != null) return
+        acquireWakeLock(reason)
         sessions.requestStop(ending)
         stopReason = reason; runtime.status = "正在保存…"; stopping = true
     }
@@ -159,7 +203,8 @@ open class RecordingService : Service(), CaptureObserver {
                 "frames" to runtime.frames, "battery_percent" to readResources().batteryPercent) + graph.telemetry.snapshot() + failureFields, error != null, ending)
         } catch (e: Exception) { finalStatus = "保存状态失败：${e.message}" }
         finally {
-            if (wakeLock?.isHeld == true) wakeLock?.release()
+            releaseWakeLock(if (error == null) "save_complete" else "recording_error")
+            wakePlan = null
             wakeLock = null; runtime.status = finalStatus; runtime.busy = false
             stopForeground(STOP_FOREGROUND_REMOVE)
         }
@@ -173,22 +218,32 @@ open class RecordingService : Service(), CaptureObserver {
     }
     override fun configured(fields: Map<String, Any>) { sessions.recordEvent("audio_configuration", fields) }
     override fun level(db: Double) { runtime.db = db; if (db > -55) lastLoudAt = SystemClock.elapsedRealtime() }
-    override fun frames(count: Int) { runtime.frames += count; runtime.lastFrameAt = SystemClock.elapsedRealtime() }
+    override fun frames(count: Int) {
+        if (runtime.frames == 0L) handler.post {
+            // A stop already queued on the main thread owns the lock until final save.
+            if (!stopping) releaseWakeLock("first_frames")
+        }
+        runtime.frames += count
+        runtime.lastFrameAt = SystemClock.elapsedRealtime()
+    }
     override fun silenced(value: Boolean) {
         if (value != runtime.muted) { runtime.muted = value; handler.post { log("system_silenced", mapOf("value" to value)) } }
     }
     private fun notification(text: String, ongoing: Boolean = true): Notification {
-        val open = PendingIntent.getActivity(this, 0, Intent(this, MainActivity::class.java), PendingIntent.FLAG_IMMUTABLE)
+        val open = openRecorder(this)
         val pause = PendingIntent.getService(this, 1, Intent(this, dev.watchmemory.RecordingService::class.java)
             .setAction(RecordingCommand.PAUSE.name), PendingIntent.FLAG_IMMUTABLE)
-        return Notification.Builder(this, "recording").setSmallIcon(R.drawable.ic_mic)
+        val builder = NotificationCompat.Builder(this, "recording").setSmallIcon(R.drawable.ic_mic)
             .setContentTitle("KoeMemo").setContentText(text).setContentIntent(open).setOngoing(ongoing).setOnlyAlertOnce(true).apply {
-                if (ongoing) addAction(Notification.Action.Builder(null, "暂停", pause).build())
-            }.build()
+                if (ongoing) addAction(R.drawable.ic_mic, "暂停", pause)
+            }
+        if (ongoing) OngoingActivity.Builder(this, 1, builder)
+            .setStaticIcon(R.drawable.ic_mic).setTouchIntent(open).build().apply(this)
+        return builder.build()
     }
     override fun onDestroy() {
         handler.removeCallbacks(monitor); stopping = true
-        if (wakeLock?.isHeld == true) wakeLock?.release()
+        releaseWakeLock("service_destroy")
         super.onDestroy()
     }
 }

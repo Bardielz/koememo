@@ -14,6 +14,17 @@
         <activity android:name=".recording.presentation.settings.SyncHistoryActivity" android:exported="false" />
         <activity android:name=".recording.presentation.settings.WearSignalActivity" android:exported="false" />
         <activity android:name=".SettingsActivity" android:exported="false" />
+        <service android:name=".surfaces.RecordingTile" android:label="KoeMemo 录音" android:exported="true"
+            android:permission="com.google.android.wearable.permission.BIND_TILE_PROVIDER">
+            <intent-filter><action android:name="androidx.wear.tiles.action.BIND_TILE_PROVIDER" /></intent-filter>
+            <meta-data android:name="androidx.wear.tiles.PREVIEW" android:resource="@drawable/tile_preview" />
+        </service>
+        <service android:name=".surfaces.RecordingComplication" android:label="KoeMemo 录音" android:exported="true"
+            android:permission="com.google.android.wearable.permission.BIND_COMPLICATION_PROVIDER">
+            <intent-filter><action android:name="android.support.wearable.complications.ACTION_COMPLICATION_UPDATE_REQUEST" /></intent-filter>
+            <meta-data android:name="android.support.wearable.complications.SUPPORTED_TYPES" android:value="SHORT_TEXT,ICON" />
+            <meta-data android:name="android.support.wearable.complications.UPDATE_PERIOD_SECONDS" android:value="0" />
+        </service>
         <service android:name=".RecordingService" android:exported="false" android:foregroundServiceType="microphone" android:stopWithTask="false" />
     </application>
 </manifest>

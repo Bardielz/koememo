@@ -1,0 +1,16 @@
+plugins { id 'com.android.library'; id 'org.jetbrains.kotlin.android' }
+
+def sdkJar = providers.gradleProperty('samsungPerformanceJar').orNull
+android {
+    namespace 'dev.koememo.samsung'
+    compileSdk 35
+    defaultConfig { minSdk 30 }
+    compileOptions { sourceCompatibility JavaVersion.VERSION_17; targetCompatibility JavaVersion.VERSION_17 }
+    kotlinOptions { jvmTarget = '17' }
+    sourceSets.main.java.srcDir sdkJar ? 'src/bundled/java' : 'src/standard/java'
+    if (sdkJar) sourceSets.main.manifest.srcFile 'src/bundled/AndroidManifest.xml'
+}
+if (sdkJar) {
+    if (!file(sdkJar).isFile()) throw new GradleException("Missing samsungPerformanceJar")
+    dependencies { implementation files(sdkJar) }
+}

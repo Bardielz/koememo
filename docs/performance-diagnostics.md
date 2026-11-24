@@ -8,6 +8,8 @@
 
 开启诊断后，捕获线程每分钟及 writer 关闭后记录 `performance` 事件：
 
+schema 2 中，编码器输入、取输出及输出复制分别在第 1、65、129… 次调用计时，其余阶段仍逐次计时。每阶段的 `_calls` 为总调用数，`_samples` 为实测次数，`_sample_every` 为抽样间隔。时间累加值和最大值仅涵盖实测调用；固定间隔可能偏向周期性工作，不能直接与全量 CPU 占比比较。汇总工具同时支持 schema 1。
+
 - `capture_read`：包含阻塞等待的麦克风读取。
 - `level`：音量计算及观察者回调。
 - `encoder_input`：等待输入缓冲、复制 PCM、提交数据；不是编码算法本身的 CPU 时间。
@@ -50,3 +52,7 @@ python3 tools/audio/diagnostics.py /path/to/events.jsonl
 异常退出后手动重新打开应用，`unclean_restart` 保存最近五条 ApplicationExitInfo 的时间、原因、进程、重要性和 PSS/RSS。查询失败记录类型，不阻止恢复。历史记录不保证属于上一轮录音，需结合时间和事件分析；没有记录不代表没有终止。系统杀进程时应用不能保证执行 finally 或写出错误日志。
 
 应用日志留在手表本地，导出后仍须按私有数据管理；本修复不自动开启录音，不宣称消除了系统低内存回收。
+
+### 录音 CPU 唤醒锁
+
+用 `adb logcat -s KoeMemoWakeLock:D` 查看操作。开启实验性能统计后，同一条记录也会以 `event=wake_lock` 写入录音目录的 `events.jsonl`。按 `run` 关联本轮启动、首帧和保存事件。操作包括获取（acquire）、延长限时（renew）、主动释放（release），以及检查时发现锁已不在持有状态（observed_unheld）。`since_acquire_ms` 是距上一次获取或续期的经过时间。自动到期只能在下次操作时观察到，该字段不能作为实际超时释放时刻。记录只随锁操作产生。
