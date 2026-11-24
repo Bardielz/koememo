@@ -51,7 +51,6 @@ open class RecordingService : Service(), CaptureObserver {
                 RecordingSafety.stop(resourcesState, now - runtime.lastFrameAt)?.let { requestStop(stopText(it)) }
             }
             if (now - lastTelemetry >= 60000) {
-                if (stopReason == null) wakeLock?.acquire(180_000L)
                 log("telemetry", mapOf("battery_percent" to resourcesState.batteryPercent, "dbfs" to runtime.db,
                     "frames" to runtime.frames, "system_silenced" to runtime.muted, "free_bytes" to resourcesState.freeBytes,
                     "thermal_status" to getSystemService(PowerManager::class.java).currentThermalStatus) + graph.telemetry.snapshot())
@@ -108,7 +107,7 @@ open class RecordingService : Service(), CaptureObserver {
             lastLoudAt = runtime.startedAt; runtime.frames = 0; runtime.muted = false
             ending = false; stopReason = null; runtime.status = "正在启动录音"; runtime.busy = true
             wakeLock = getSystemService(PowerManager::class.java).newWakeLock(
-                PowerManager.PARTIAL_WAKE_LOCK, "watchmemory:recording").apply { setReferenceCounted(false); acquire(180_000L) }
+                PowerManager.PARTIAL_WAKE_LOCK, "watchmemory:recording").apply { setReferenceCounted(false); acquire(30_000L) }
             val diagnostics = RecordingDiagnostics(diagnosticEnabled, AndroidDiagnosticClock, AndroidDiagnosticTrace)
             fun reportDiagnostics(final: Boolean) {
                 if (diagnosticEnabled) sessions.recordEvent("performance", diagnostics.snapshot() + ("final" to final) + ("run" to plan.runId))
@@ -148,6 +147,7 @@ open class RecordingService : Service(), CaptureObserver {
     }
     private fun requestStop(reason: String) {
         if (stopReason != null) return
+        wakeLock?.acquire(30_000L)
         sessions.requestStop(ending)
         stopReason = reason; runtime.status = "正在保存…"; stopping = true
     }
@@ -173,7 +173,14 @@ open class RecordingService : Service(), CaptureObserver {
     }
     override fun configured(fields: Map<String, Any>) { sessions.recordEvent("audio_configuration", fields) }
     override fun level(db: Double) { runtime.db = db; if (db > -55) lastLoudAt = SystemClock.elapsedRealtime() }
-    override fun frames(count: Int) { runtime.frames += count; runtime.lastFrameAt = SystemClock.elapsedRealtime() }
+    override fun frames(count: Int) {
+        if (runtime.frames == 0L) handler.post {
+            // A stop already queued on the main thread owns the lock until final save.
+            if (!stopping && wakeLock?.isHeld == true) wakeLock?.release()
+        }
+        runtime.frames += count
+        runtime.lastFrameAt = SystemClock.elapsedRealtime()
+    }
     override fun silenced(value: Boolean) {
         if (value != runtime.muted) { runtime.muted = value; handler.post { log("system_silenced", mapOf("value" to value)) } }
     }
