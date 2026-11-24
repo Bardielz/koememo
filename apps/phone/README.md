@@ -24,6 +24,14 @@ python3 tools/sync/verify-device-transfer.py --phone "$PHONE_SERIAL" --watch "$W
 
 ## 双端同步性能统计
 
+手机开始同步时会保存会话编号。传输期间进程被系统回收，前台服务重新创建后会沿用该编号续传。连接重试耗尽后保留任务，下次打开手机应用时再尝试。手动暂停会清除待恢复任务，已接收的数据保留。
+
+连接已解锁的 debug 手机和配对手表，确保有待传录音且同步处于空闲状态，运行以下真机回归。脚本从界面开始同步，将手机应用切到后台并终止其进程，检查服务恢复和会话编号，然后暂停同步并验证重新打开后的状态。
+
+```sh
+python3 tools/sync/test-device-recovery.py --phone "$PHONE_SERIAL"
+```
+
 手机在「实验功能」内开启总开关和「同步性能与耗电统计」。手表沿用「设置 → 实验功能 → 性能与耗电统计」。两端各自控制，默认关闭，从下一次同步尝试生效。「查看同步统计」展示本机最近五次尝试，关闭采样后仍可查看历史。UID 用户态与内核态 CPU 来自本应用 UID 的系统累计快照差，统计窗口重置或字段缺失时省略。
 
 开启采样后，两端在应用私有目录 `files/diagnostics/sync.jsonl` 写入本机数据。每次连接尝试记录开始、约每 60 秒的快照和结束结果。约 1 MiB 后轮换，保留上一份 `sync.previous.jsonl`。每条同步采样还以相同 JSON 写入 logcat 的 KoeMemoMetrics 标签，可用 `adb -s "$SERIAL" logcat -s KoeMemoMetrics:I` 实时查看。仅同步期间采样。新版两端用同一 session 关联，重试产生新的 attempt。旧版通道在手表上标为 legacy。传输中进程被终止可能只有开始或中间样本。
@@ -51,3 +59,5 @@ adb -s "$SERIAL" shell dumpsys batterystats dev.watchmemory
 ```
 
 系统给 UID 的 CPU、audio 等分类为归因估算，可能包含录音和同步并行的消耗。框架代为执行的工作也可能计入其他 UID。用应用的阶段耗时、CPU 时间、字节和系统统计交叉分析。调试内存可用 `adb -s "$SERIAL" shell dumpsys meminfo dev.watchmemory` 获取进程 PSS。系统统计字段和硬件电量监测能力依设备而异。
+
+重连时手机先处理带断点的分段，再接收缺失文件，最后核对本地完整文件。支持回执目录的手表会报告当前手机已确认的哈希。手机重新校验本地 SHA-256 后可以复用对应回执；文件缺失或校验失败时仍会接收。旧设备继续使用原通道逐段确认。界面中的序号表示本次处理顺序。
