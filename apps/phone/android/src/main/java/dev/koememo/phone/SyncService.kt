@@ -19,6 +19,8 @@ private class WatchUnavailable : IOException("手表暂不可达")
 
 class SyncService : Service() {
     companion object {
+        const val RESUME = "dev.koememo.phone.RESUME_PENDING"
+        const val PENDING = "pending_session"
         const val PAUSE = "dev.koememo.phone.PAUSE_SYNC"
         @Volatile var running = false
             private set
@@ -27,7 +29,8 @@ class SyncService : Service() {
     private val notifications by lazy { getSystemService(NotificationManager::class.java) }
     private val stopped = CountDownLatch(1)
     @Volatile private var active: ChannelClient.Channel? = null
-    private val session = UUID.randomUUID().toString()
+    private val prefs by lazy { getSharedPreferences("sync_state", MODE_PRIVATE) }
+    private lateinit var session: String
     private var stage = "discover"
     private var segment = "-"
     private var bytes = 0L
@@ -37,17 +40,32 @@ class SyncService : Service() {
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         if (intent?.action == PAUSE) {
-            Log.i("KoeMemoSync", "session=$session side=phone reason=user_pause")
+            prefs.edit().remove(PENDING).commit()
+            if (!running) publish("已暂停，可继续同步")
+            Log.i("KoeMemoSync", "side=phone reason=user_pause")
             stopTransfer()
             if (!running) stopSelf()
         } else if (!running && !finished) {
+            val pending = prefs.getString(PENDING, null)
+            if ((intent == null || intent.action == RESUME) && pending == null) {
+                stopSelf(startId)
+                return START_NOT_STICKY
+            }
+            session = pending ?: UUID.randomUUID().toString()
             running = true
             notifications.createNotificationChannel(NotificationChannel("transfer", "录音同步", NotificationManager.IMPORTANCE_LOW))
             startForeground(1, notification("正在查找手表"))
-            publish("正在查找手表")
+            if (!prefs.edit().putString(PENDING, session).commit()) {
+                running = false
+                publish("无法保存同步任务")
+                stopSelf(startId)
+                return START_NOT_STICKY
+            }
+            publish(if (pending == null) "正在查找手表" else "正在恢复同步")
+            Log.i("KoeMemoSync", "session=$session side=phone restored=${pending != null}")
             Thread(::transfer, "KoeMemoSync").start()
         }
-        return START_NOT_STICKY
+        return if (running && stopped.count != 0L) START_STICKY else START_NOT_STICKY
     }
 
     private fun notification(message: String): Notification {
@@ -84,6 +102,7 @@ class SyncService : Service() {
 
     private fun transfer() {
         var message = "已暂停，可继续同步"
+        var retainTask = false
         for (attempt in 0..3) {
             val metrics = if (PhoneExperiments.collectMetrics(this)) SyncMetrics(this, "phone", session) else null
             var outcome = "interrupted"
@@ -111,6 +130,7 @@ class SyncService : Service() {
                 outcome = if (paused) "paused" else cause.javaClass.simpleName
                 if (paused) break
                 if (!retry || attempt == 3) {
+                    retainTask = retry
                     message = if (cause is WatchUnavailable) "等待手表连接，可继续同步" else "同步失败，可重试：" + (cause.message ?: reason)
                     break
                 }
@@ -130,6 +150,7 @@ class SyncService : Service() {
         main.post {
             if (!finished) {
                 finished = true
+                if (!retainTask) prefs.edit().remove(PENDING).commit()
                 running = false
                 publish(message)
                 stopForeground(STOP_FOREGROUND_REMOVE)

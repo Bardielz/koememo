@@ -53,6 +53,9 @@ class LibraryActivity : Activity() {
         super.onStart()
         player.resumeUpdates()
         syncState.registerOnSharedPreferenceChangeListener(syncListener)
+        if (!SyncService.running && syncState.contains(SyncService.PENDING)) {
+            startForegroundService(Intent(this, SyncService::class.java).setAction(SyncService.RESUME))
+        }
         renderSync()
         if (SyncService.running) refresh()
     }
@@ -66,7 +69,7 @@ class LibraryActivity : Activity() {
         val saved = syncState.getString("status", "").orEmpty()
         status.text = if (!running && syncState.getBoolean("active", false)) "同步已中断，可继续同步" else saved
         sync.isEnabled = !running
-        pause.isEnabled = running
+        pause.isEnabled = running || syncState.contains(SyncService.PENDING)
         if (!running) refresh()
     }
     override fun onDestroy() { player.release(); super.onDestroy() }
