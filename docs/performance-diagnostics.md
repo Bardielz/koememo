@@ -50,3 +50,7 @@ python3 tools/audio/diagnostics.py /path/to/events.jsonl
 异常退出后手动重新打开应用，`unclean_restart` 保存最近五条 ApplicationExitInfo 的时间、原因、进程、重要性和 PSS/RSS。查询失败记录类型，不阻止恢复。历史记录不保证属于上一轮录音，需结合时间和事件分析；没有记录不代表没有终止。系统杀进程时应用不能保证执行 finally 或写出错误日志。
 
 应用日志留在手表本地，导出后仍须按私有数据管理；本修复不自动开启录音，不宣称消除了系统低内存回收。
+
+### 录音 CPU 唤醒锁
+
+用 `adb logcat -s KoeMemoWakeLock:D` 查看操作。开启实验性能统计后，同一条记录也会以 `event=wake_lock` 写入录音目录的 `events.jsonl`。按 `run` 关联本轮启动、首帧和保存事件。操作包括获取（acquire）、延长限时（renew）、主动释放（release），以及检查时发现锁已不在持有状态（observed_unheld）。`since_acquire_ms` 是距上一次获取或续期的经过时间。自动到期只能在下次操作时观察到，该字段不能作为实际超时释放时刻。记录只随锁操作产生。
