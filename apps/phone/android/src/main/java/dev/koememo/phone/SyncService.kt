@@ -152,7 +152,9 @@ class SyncService : Service() {
     }
 
     private fun receive(session: String, metrics: SyncMetrics?): Int {
+        val progress = TransferProgress(android.os.SystemClock::elapsedRealtime)
         fun enter(phase: String) {
+            progress.enter(phase)
             stage = phase
             metrics?.enter(phase)
         }
@@ -174,13 +176,27 @@ class SyncService : Service() {
             throw e
         }
         active = channel
+        val watchdog = java.util.Timer("sync-channel-progress", true)
+        val timedOut = java.util.concurrent.atomic.AtomicBoolean(false)
         try {
             checkActive()
+            enter("streams")
+            watchdog.schedule(object : java.util.TimerTask() {
+                override fun run() {
+                    if (progress.expired(120_000L)) {
+                        cancel()
+                        timedOut.set(true)
+                        Log.w("KoeMemoSync", "session=$session side=phone idle_timeout phase=${progress.stage}")
+                        client.close(channel)
+                    }
+                }
+            }, 10_000L, 10_000L)
             val input = DataInputStream(awaitSetup(client.getInputStream(channel)).buffered())
             val output = DataOutputStream(awaitSetup(client.getOutputStream(channel)).buffered())
-            enter("catalog")
+            enter("catalog_header")
             val count = input.readInt(); require(count in 0..100000)
-            val entries = List(count) { Segment.read(input) }
+            enter("catalog_entries")
+            val entries = List(count) { Segment.read(input).also { progress.advanced(0) } }
             entries.forEachIndexed { index, item ->
                 checkActive()
                 enter("verify_local")
@@ -201,6 +217,7 @@ class SyncService : Service() {
                     check(dir.usableSpace > item.size-offset) { "手机存储空间不足" }
                     FileOutputStream(part,true).use {
                         copyExactly(input,it,item.size-offset) { n ->
+                            progress.advanced(n)
                             bytes += n
                             metrics?.copied(n)
                         }
@@ -219,6 +236,13 @@ class SyncService : Service() {
             check(input.readBoolean()) { "手表未确认完成，请重试" }
             enter("completed")
             return count
-        } finally { client.close(channel); active = null }
+        } catch (e: Exception) {
+            if (timedOut.get()) throw TimeoutException("手机等待同步进展超时：$stage").apply { initCause(e) }
+            throw e
+        } finally {
+            watchdog.cancel()
+            client.close(channel)
+            active = null
+        }
     }
 }

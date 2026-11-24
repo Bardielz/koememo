@@ -14,6 +14,7 @@ class AudioTransferSession(private val context: Context, private val diagnostics
             val events = File(dir, "events.jsonl")
             if (!events.isFile) continue
             events.useLines { lines -> lines.forEach { line ->
+                if (!line.contains("segment_closed")) return@forEach
                 val event = runCatching { JSONObject(line) }.getOrNull()
                 if (event?.optString("event") == "segment_closed") {
                     val entry = Segment(dir.name, event.getString("file"), event.getLong("bytes"), event.getString("sha256"))
