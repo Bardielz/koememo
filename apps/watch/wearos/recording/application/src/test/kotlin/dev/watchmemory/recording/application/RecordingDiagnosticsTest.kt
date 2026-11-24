@@ -35,6 +35,25 @@ class RecordingDiagnosticsTest {
         assertEquals(2000L, values["capture_read_max_wall_ns"])
         assertEquals(values, stats.snapshot()) // Reports are cumulative, not destructive.
     }
+    @Test fun sampledStageCountsAllCallsAndPreservesUnsampledFailure() {
+        val clock = Clock()
+        val trace = Trace()
+        val stats = RecordingDiagnostics(true, clock, trace)
+        val stage = RecordingStage.ENCODER_INPUT
+        stats.measure(stage) { clock.wall += 10 }
+        val failure = assertThrows(RecordingFailure::class.java) {
+            stats.measure(stage) { error("no input") }
+        }
+        assertEquals(stage.name, failure.stage)
+        repeat(63) { stats.measure(stage) { clock.wall += 20 } }
+        val snapshot = stats.snapshot()
+        assertEquals(65L, snapshot["encoder_input_calls"])
+        assertEquals(2L, snapshot["encoder_input_samples"])
+        assertEquals(30L, snapshot["encoder_input_wall_ns"])
+        assertEquals(8, clock.reads)
+        assertEquals(2, trace.calls)
+    }
+
     @Test fun writerDecoratorPreservesPayloadSyncAndClose() {
         val stats = RecordingDiagnostics(true, Clock(), Trace())
         val events = mutableListOf<String>()

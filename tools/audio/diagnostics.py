@@ -11,7 +11,7 @@ def summarize(path):
         event = json.loads(line)
         if event.get('event') != 'performance':
             continue
-        if event.get('schema') != 1 or event.get('cumulative') is not True:
+        if event.get('schema') not in (1, 2) or event.get('cumulative') is not True:
             raise ValueError(f'Unsupported performance schema at line {number}')
         run = event['run']
         previous = runs.get(run)
@@ -25,12 +25,16 @@ def summarize(path):
             if not key.endswith('_calls'):
                 continue
             stage = key[:-6]
+            samples = calls if event['schema'] == 1 else event[stage + '_samples']
+            interval = 1 if event['schema'] == 1 else event[stage + '_sample_every']
             wall = event[stage + '_wall_ns']
             cpu = event[stage + '_cpu_ns']
-            stages.append({'stage': stage, 'calls': calls, 'wall_ms': wall / 1e6,
-                           'thread_cpu_ms': cpu / 1e6,
-                           'mean_wall_ms': wall / calls / 1e6 if calls else None,
-                           'max_wall_ms': event[stage + '_max_wall_ns'] / 1e6})
+            prefix = 'sampled_' if interval > 1 else ''
+            stages.append({'stage': stage, 'calls': calls, 'samples': samples, 'sample_every': interval,
+                           prefix + 'wall_ms': wall / 1e6,
+                           prefix + 'thread_cpu_ms': cpu / 1e6,
+                           prefix + 'mean_wall_ms': wall / samples / 1e6 if samples else None,
+                           prefix + 'max_wall_ms': event[stage + '_max_wall_ns'] / 1e6})
         results.append({'run': run, 'complete': event.get('final', False), 'stages': stages})
     return {'runs': results, 'scope': 'Capture-thread observations; excludes codec process CPU and does not measure energy. Latest cumulative report per run only.'}
 
