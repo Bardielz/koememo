@@ -12,7 +12,8 @@ uniform int frames;
 shared float state[168]; // VAD, noise, denoise
 shared float x[114], dense[24], resetGate[96];
 float weight(int idx) {
-    return float(bitfieldExtract(int(packedWeights[idx / 4]), 8 * (idx % 4), 8));
+    uint b = (packedWeights[idx / 4] >> uint(8 * (idx % 4))) & 255u;
+    return float(int(b ^ 128u) - 128);
 }
 float sigmoid(float v) { return 0.5 + 0.5 * tanh(clamp(0.5*v, -8.0, 8.0)); }
 
@@ -58,11 +59,6 @@ void main() {
         }
         barrier();
         gru(24,24,0,VAD_GRU_BIAS,VAD_GRU_WEIGHTS,VAD_GRU_RECURRENT_WEIGHTS);
-        if (i==0) {
-            float sum = weight(VAD_OUTPUT_BIAS);
-            for (int j=0; j<24; ++j) sum += state[j]*weight(VAD_OUTPUT_WEIGHTS+j);
-            predictions[23*f+22] = sigmoid(sum/256.0);
-        }
         if (i<24) { x[i]=dense[i]; x[24+i]=state[i]; }
         if (i<42) x[48+i]=features[42*f+i];
         barrier();
@@ -71,9 +67,14 @@ void main() {
         if (i<42) x[72+i]=features[42*f+i];
         barrier();
         gru(114,96,72,DENOISE_GRU_BIAS,DENOISE_GRU_WEIGHTS,DENOISE_GRU_RECURRENT_WEIGHTS);
-        if (i<22) {
-            float sum = weight(DENOISE_OUTPUT_BIAS+i);
-            for (int j=0; j<96; ++j) sum += state[72+j]*weight(DENOISE_OUTPUT_WEIGHTS+j*22+i);
+        if (i<23) {
+            bool vad = i==22;
+            int n = vad ? 24 : 96;
+            int base = vad ? 0 : 72;
+            int offset = vad ? VAD_OUTPUT_WEIGHTS : DENOISE_OUTPUT_WEIGHTS+i;
+            int stride = vad ? 1 : 22;
+            float sum = weight(vad ? VAD_OUTPUT_BIAS : DENOISE_OUTPUT_BIAS+i);
+            for (int j=0; j<n; ++j) sum += state[base+j]*weight(offset+j*stride);
             predictions[23*f+i] = sigmoid(sum/256.0);
         }
         barrier();
