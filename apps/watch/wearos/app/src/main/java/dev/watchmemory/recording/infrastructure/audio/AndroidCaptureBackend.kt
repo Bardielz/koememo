@@ -63,6 +63,7 @@ class AndroidCaptureBackend(
             var lastLevel = 0L
             var samples = 0L
             var lastCheck = 0L
+            var hasEncodedAudio = false
             var dirty = false
             var lastSync = SystemClock.elapsedRealtime()
             var lastDiagnostics = lastSync
@@ -97,7 +98,8 @@ class AndroidCaptureBackend(
                                 lastCheck = now
                             }
                             val wasPaused = gate.paused
-                            val output = gate.accept(pcm, pending, micSilenced == false)
+                            // An encoder which never produces its first packet must still time out.
+                            val output = gate.accept(pcm, pending, hasEncodedAudio && micSilenced == false)
                             if (gate.paused) observer.quietProgress()
                             if (wasPaused != gate.paused) {
                                 observer.quietTransition(if (gate.paused) "pause" else "resume",
@@ -148,6 +150,7 @@ class AndroidCaptureBackend(
                             check(info.size <= encoded.size) { "Encoded packet too large" }
                             diagnostics.measure(RecordingStage.OUTPUT_COPY) { output.get(encoded, 0, info.size) }
                             writer.write(encoded, info.presentationTimeUs, info.size)
+                            hasEncodedAudio = true
                             dirty = true
                             produced++
                         }
