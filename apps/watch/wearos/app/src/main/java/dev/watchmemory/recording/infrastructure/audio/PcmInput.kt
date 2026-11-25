@@ -1,5 +1,6 @@
 package dev.watchmemory.recording.infrastructure.audio
 
+import java.nio.ByteBuffer
 import android.annotation.SuppressLint
 import android.media.AudioFormat
 import android.media.AudioRecord
@@ -13,6 +14,7 @@ interface PcmInput {
     val silenced: Boolean?
     fun start()
     fun read(buffer: ByteArray): Int
+    fun readDirect(buffer: ByteBuffer, length: Int): Int? = null
     fun stop()
     fun release()
 }
@@ -38,6 +40,7 @@ internal fun androidPcmInput(source: RecordingSource, rate: Int): PcmInput {
             check(mic.recordingState == AudioRecord.RECORDSTATE_RECORDING) { "Microphone did not start" }
         }
         override fun read(buffer: ByteArray) = mic.read(buffer, 0, buffer.size, AudioRecord.READ_BLOCKING)
+        override fun readDirect(buffer: ByteBuffer, length: Int) = mic.read(buffer, length, AudioRecord.READ_BLOCKING)
         override fun stop() = mic.stop()
         override fun release() = mic.release()
     }

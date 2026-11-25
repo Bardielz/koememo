@@ -10,7 +10,7 @@ interface DiagnosticTrace {
     fun end()
 }
 enum class RecordingStage(val sampleEvery: Int = 1) {
-    CAPTURE_READ, LEVEL, ENCODER_INPUT(64), ENCODER_OUTPUT_WAIT(64), OUTPUT_COPY(64),
+    CAPTURE_READ, LEVEL, ENCODER_INPUT_WAIT(64), ENCODER_INPUT(64), ENCODER_OUTPUT_WAIT(64), OUTPUT_COPY(64),
     WRITE_AND_PACKAGE, SYNC, CLOSE
 }
 class RecordingDiagnostics(

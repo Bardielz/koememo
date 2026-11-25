@@ -23,4 +23,27 @@ class DiagnosticSettingsTest {
         assertEquals(defaults, settings.configuration())
         settings.setExperiments(true); assertTrue(settings.diagnosticsEnabled)
     }
+
+    @Test fun audioOptimizationsAreIndependentAndRespectMasterAndCodec() {
+        val repo = object : SettingsRepository {
+            var value = ExperimentOptions()
+            override fun load() = value
+            override fun save(value: ExperimentOptions) { this.value = value }
+        }
+        val settings = RecordingSettings(repo, RecordingRuntime(), false)
+        settings.setExperiments(true)
+        settings.setReuseOgg(true)
+        assertFalse(settings.configuration().reuseOgg)
+        settings.setEncoding(dev.watchmemory.recording.domain.RecordingEncoding.OPUS)
+        assertTrue(settings.configuration().reuseOgg)
+        assertFalse(settings.configuration().directPcm)
+        settings.setDirectPcm(true)
+        settings.setReuseOgg(false)
+        assertTrue(settings.configuration().directPcm)
+        assertFalse(settings.configuration().reuseOgg)
+        settings.setReuseOgg(true)
+        settings.setExperiments(false)
+        assertFalse(settings.configuration().directPcm)
+        assertFalse(settings.configuration().reuseOgg)
+    }
 }
