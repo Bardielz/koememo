@@ -5,7 +5,8 @@ data class RecordingConfiguration(
     val sampleRate: Int,
     val encoding: RecordingEncoding,
     val bitrate: Int,
-    val experimentsEnabled: Boolean
+    val experimentsEnabled: Boolean,
+    val noiseSuppression: Boolean = true
 ) {
     init {
         require(sampleRate in ExperimentPolicy.sampleRates)

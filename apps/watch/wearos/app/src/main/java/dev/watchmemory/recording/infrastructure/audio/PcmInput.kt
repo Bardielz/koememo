@@ -7,6 +7,7 @@ import dev.watchmemory.recording.domain.RecordingSource
 
 /** Mono signed 16-bit little-endian PCM. read returns a byte count. */
 interface PcmInput {
+    val audioSessionId: Int? get() = null
     val sampleRate: Int
     val deviceSampleRate: Int?
     val bufferSizeInFrames: Int
@@ -29,6 +30,7 @@ internal fun androidPcmInput(source: RecordingSource, rate: Int): PcmInput {
         error("Microphone initialization failed")
     }
     return object : PcmInput {
+        override val audioSessionId get() = mic.audioSessionId
         override val sampleRate get() = mic.sampleRate
         override val deviceSampleRate get() = mic.activeRecordingConfiguration?.format?.sampleRate
         override val bufferSizeInFrames get() = mic.bufferSizeInFrames
