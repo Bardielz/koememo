@@ -5,9 +5,11 @@ data class RecordingConfiguration(
     val sampleRate: Int,
     val encoding: RecordingEncoding,
     val bitrate: Int,
-    val experimentsEnabled: Boolean
+    val experimentsEnabled: Boolean,
+    val quietGate: Boolean = false
 ) {
     init {
+        require(!quietGate || experimentsEnabled)
         require(sampleRate in ExperimentPolicy.sampleRates)
         require(bitrate in encoding.rates)
         require(experimentsEnabled || (source == RecordingSource.MIC && sampleRate == 16000 && encoding == RecordingEncoding.AAC && bitrate == 48000))
