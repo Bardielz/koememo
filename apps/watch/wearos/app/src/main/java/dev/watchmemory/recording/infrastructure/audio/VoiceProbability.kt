@@ -53,6 +53,9 @@ internal class VoiceProbability private constructor(
             require(rate in setOf(16000, 24000, 48000))
             val env = OrtEnvironment.getEnvironment()
             val session = OrtSession.SessionOptions().use { options ->
+                // Avoid runtime graph rewrites and prepacked-weight hashing on 32-bit Wear CPUs.
+                options.setOptimizationLevel(OrtSession.SessionOptions.OptLevel.NO_OPT)
+                options.addConfigEntry("session.disable_prepacking", "1")
                 options.setIntraOpNumThreads(1)
                 options.setInterOpNumThreads(1)
                 assets.open("silero/vad-v5.1.onnx").use { env.createSession(it.readBytes(), options) }
