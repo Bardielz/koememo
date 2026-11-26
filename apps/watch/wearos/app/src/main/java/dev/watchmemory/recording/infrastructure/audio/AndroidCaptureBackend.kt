@@ -5,6 +5,7 @@ import dev.watchmemory.recording.application.*
 import android.media.*
 import android.os.SystemClock
 import java.io.IOException
+import java.nio.ByteBuffer
 import kotlin.math.*
 
 class AndroidCaptureBackend(
@@ -33,6 +34,7 @@ class AndroidCaptureBackend(
             check(mic.sampleRate == sampleRate) { "Unexpected client sample rate: ${mic.sampleRate}" }
             // Read 128 ms at a time even when the codec accepts smaller input buffers.
             val pcm = ByteArray(sampleRate * 2 * 128 / 1000)
+            var direct = request.configuration.directPcm
             val format = MediaFormat.createAudioFormat(AudioFormats.mime(encoding), sampleRate, 1).apply {
                 if (encoding == RecordingEncoding.AAC) setInteger(MediaFormat.KEY_AAC_PROFILE, MediaCodecInfo.CodecProfileLevel.AACObjectLC)
                 setInteger(MediaFormat.KEY_BIT_RATE, bitrate)
@@ -50,6 +52,7 @@ class AndroidCaptureBackend(
                 "client_sample_rate" to mic.sampleRate,
                 "device_sample_rate" to (mic.deviceSampleRate ?: 0),
                 "audio_record_buffer_frames" to mic.bufferSizeInFrames,
+                "direct_pcm_requested" to direct, "reuse_ogg" to request.configuration.reuseOgg,
                 "pcm_batch_bytes" to pcm.size, "encoder" to codec.name, "encoding" to encoding.name, "target_bitrate" to bitrate,
                 "encoder_software_only" to codec.codecInfo.isSoftwareOnly,
                 "encoder_hardware_accelerated" to codec.codecInfo.isHardwareAccelerated,
@@ -58,6 +61,21 @@ class AndroidCaptureBackend(
             var pending = 0
             var offset = 0
             var lastLevel = 0L
+            fun reportLevel(length: Int, directBuffer: ByteBuffer? = null) {
+                val now = SystemClock.elapsedRealtime()
+                if (now - lastLevel < 500) return
+                diagnostics.measure(RecordingStage.LEVEL) {
+                    // Sample only at the meter cadence; bulk read avoids per-sample direct-buffer access.
+                    directBuffer?.get(pcm, 0, length)
+                    var sum = 0.0
+                    for (i in 0 until length step 2) {
+                        val value = ((pcm[i].toInt() and 255) or (pcm[i + 1].toInt() shl 8)).toShort().toDouble()
+                        sum += value * value
+                    }
+                    observer.level(20 * log10(max(1.0, sqrt(sum / (length / 2))) / 32768.0))
+                }
+                lastLevel = now
+            }
             var samples = 0L
             var lastCheck = 0L
             var lastSync = SystemClock.elapsedRealtime()
@@ -70,37 +88,43 @@ class AndroidCaptureBackend(
                 if (request.stopping() && deadline == Long.MAX_VALUE) deadline = SystemClock.elapsedRealtime() + 5000
                 check(SystemClock.elapsedRealtime() <= deadline) { "Encoder drain timed out" }
                 if (!inputEnded) {
-                    if (offset == pending && !request.stopping()) {
+                    if (!direct && offset == pending && !request.stopping()) {
                         pending = diagnostics.measure(RecordingStage.CAPTURE_READ) { mic.read(pcm) }
                         offset = 0
                         if (pending <= 0 || pending % 2 != 0) throw IOException("Microphone read error: $pending")
-                        val now = SystemClock.elapsedRealtime()
-                        if (now - lastLevel >= 500) {
-                            diagnostics.measure(RecordingStage.LEVEL) {
-                                var sum = 0.0
-                                for (i in 0 until pending step 2) {
-                                    val value = ((pcm[i].toInt() and 255) or (pcm[i + 1].toInt() shl 8)).toShort().toDouble()
-                                    sum += value * value
-                                }
-                                observer.level(20 * log10(max(1.0, sqrt(sum / (pending / 2))) / 32768.0))
-                            }
-                            lastLevel = now
-                        }
+                        reportLevel(pending)
                     }
-                    diagnostics.measure(RecordingStage.ENCODER_INPUT) {
-                        val slot = codec.dequeueInputBuffer(10000)
-                        if (slot >= 0) {
-                            val input = checkNotNull(codec.getInputBuffer(slot))
-                            input.clear()
-                            val count = min(pending - offset, input.remaining()) and -2
-                            check(count > 0 || (request.stopping() && offset == pending)) { "Encoder input buffer too small" }
-                            if (count > 0) input.put(pcm, offset, count)
+                    val slot = diagnostics.measure(RecordingStage.ENCODER_INPUT_WAIT) { codec.dequeueInputBuffer(10000) }
+                    if (slot >= 0) {
+                        val input = checkNotNull(codec.getInputBuffer(slot))
+                        input.clear()
+                        val capacity = min(pcm.size, input.remaining()) and -2
+                        check(capacity > 0) { "Encoder input buffer too small" }
+                        val directCount = if (direct && !request.stopping() && input.isDirect)
+                            diagnostics.measure(RecordingStage.CAPTURE_READ) { mic.readDirect(input, capacity) }
+                        else null
+                        if (directCount != null) {
+                            if (directCount !in 1..capacity || directCount % 2 != 0) throw IOException("Microphone read error: $directCount")
+                            if (samples == 0L) observer.configured(mapOf("direct_pcm_active" to true,
+                                "codec_slot_bytes" to input.capacity(), "first_read_bytes" to directCount))
+                            reportLevel(directCount, input)
+                        } else if (direct && !request.stopping()) {
+                            direct = false
+                            observer.configured(mapOf("direct_pcm_fallback" to true))
+                            pending = diagnostics.measure(RecordingStage.CAPTURE_READ) { mic.read(pcm) }
+                            if (pending <= 0 || pending % 2 != 0) throw IOException("Microphone read error: $pending")
+                            offset = 0
+                            reportLevel(pending)
+                        }
+                        val count = directCount ?: min(pending - offset, capacity)
+                        diagnostics.measure(RecordingStage.ENCODER_INPUT) {
+                            if (directCount == null && count > 0) input.put(pcm, offset, count)
                             codec.queueInputBuffer(slot, 0, count, samples * 1_000_000 / sampleRate,
                                 if (count == 0) MediaCodec.BUFFER_FLAG_END_OF_STREAM else 0)
-                            samples += count / 2
-                            offset += count
-                            inputEnded = count == 0
                         }
+                        samples += count / 2
+                        if (directCount == null) offset += count
+                        inputEnded = count == 0
                     }
                 }
                 var produced = 0

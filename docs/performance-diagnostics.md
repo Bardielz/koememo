@@ -12,7 +12,7 @@ schema 2 中，编码器输入、取输出及输出复制分别在第 1、65、1
 
 - `capture_read`：包含阻塞等待的麦克风读取。
 - `level`：音量计算及观察者回调。
-- `encoder_input`：等待输入缓冲、复制 PCM、提交数据；不是编码算法本身的 CPU 时间。
+- 新日志的 `encoder_input_wait` 记录获取编码器输入缓冲的耗时，`encoder_input` 记录复制（如需）及提交。旧日志只有 `encoder_input`，其中包含等待。两者均仅测采集线程。
 - `encoder_output_wait`：取得编码输出缓冲的调用，包括等待。
 - `output_copy`：复制编码输出。
 - `write_and_package`：容器封装和缓冲写入，包括切段关闭时的同步、哈希和事件记录。

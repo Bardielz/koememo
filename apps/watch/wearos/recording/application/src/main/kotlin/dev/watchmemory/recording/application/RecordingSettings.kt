@@ -4,11 +4,15 @@ import dev.watchmemory.recording.domain.*
 
 data class ExperimentOptions(val enabled: Boolean = false, val source: String = "MIC", val sampleRate: Int = 16000,
     val encoding: String = "AAC", val aacBitrate: Int = 48000, val opusBitrate: Int = 24000, val diagnostics: Boolean = false,
-    val backend: String? = null)
+    val backend: String? = null, val directPcm: Boolean = false, val reuseOgg: Boolean = false)
 interface SettingsRepository { fun load(): ExperimentOptions; fun save(value: ExperimentOptions) }
 class RecordingSettings(private val repository: SettingsRepository, private val state: RecordingReadModel, val rawSupported: Boolean) {
     val experimentsEnabled get() = repository.load().enabled
     val diagnosticsEnabled get() = repository.load().let { it.enabled && it.diagnostics }
+    val selectedDirectPcm get() = repository.load().directPcm
+    val selectedReuseOgg get() = repository.load().reuseOgg
+    fun setDirectPcm(value: Boolean) = change { it.copy(directPcm = value) }
+    fun setReuseOgg(value: Boolean) = change { it.copy(reuseOgg = value) }
     val selectedDiagnostics get() = repository.load().diagnostics
     val requiredBackend get() = repository.load().let { if (it.enabled) it.backend else null }
     fun setBackend(id: String?) = change { it.copy(backend = id) }
@@ -21,7 +25,8 @@ class RecordingSettings(private val repository: SettingsRepository, private val 
         val encoding = RecordingEncoding.effective(options.enabled, options.encoding)
         return RecordingConfiguration(ExperimentPolicy.source(options.enabled, options.source, rawSupported),
             ExperimentPolicy.sampleRate(options.enabled, options.sampleRate), encoding,
-            RecordingEncoding.bitrate(options.enabled, encoding, if (encoding == RecordingEncoding.AAC) options.aacBitrate else options.opusBitrate), options.enabled)
+            RecordingEncoding.bitrate(options.enabled, encoding, if (encoding == RecordingEncoding.AAC) options.aacBitrate else options.opusBitrate), options.enabled,
+            options.enabled && options.directPcm, options.enabled && options.reuseOgg && encoding == RecordingEncoding.OPUS)
     }
     private fun change(experimental: Boolean = true, update: (ExperimentOptions) -> ExperimentOptions) {
         check(!state.busy) { "请先暂停录音" }
