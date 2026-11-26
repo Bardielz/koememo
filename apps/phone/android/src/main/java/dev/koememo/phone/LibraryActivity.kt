@@ -88,9 +88,11 @@ class LibraryActivity : Activity() {
         list.adapter = ArrayAdapter(this, android.R.layout.simple_list_item_1, files.map { it.parentFile!!.name + "/" + it.name })
         list.setOnItemClickListener { _, _, index, _ ->
             val file = files[index]
-            android.app.AlertDialog.Builder(this).setTitle(file.name).setItems(arrayOf("播放", "导出")) { _, choice ->
+            android.app.AlertDialog.Builder(this).setTitle(file.name).setItems(arrayOf("播放", "导出", "本地转写")) { _, choice ->
                 if (choice == 0) {
                     player.play(file)
+                } else if (choice == 2) {
+                    startActivity(Intent(this, TranscriptionActivity::class.java).putExtra("path", file.path))
                 } else {
                     exporting = file
                     startActivityForResult(android.content.Intent(android.content.Intent.ACTION_CREATE_DOCUMENT).apply {

@@ -63,7 +63,7 @@ internal class RecordingPlayer(context: Context) : LinearLayout(context) {
         current.seekTo(ms.toLong(), MediaPlayer.SEEK_CLOSEST)
     }
 
-    fun play(file: File) {
+    fun play(file: File, startMs: Int = 0) {
         release()
         title.text = file.name
         time.text = "正在读取录音…"
@@ -80,6 +80,7 @@ internal class RecordingPlayer(context: Context) : LinearLayout(context) {
             seek.max = duration.coerceAtLeast(1)
             seek.isEnabled = duration > 0
             toggle.isEnabled = true
+            if (startMs > 0) seekTo(startMs.coerceAtMost(duration))
             it.start()
             refreshControls(it)
         }
