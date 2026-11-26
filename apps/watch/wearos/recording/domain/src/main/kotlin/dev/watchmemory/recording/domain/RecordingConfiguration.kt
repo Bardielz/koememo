@@ -8,6 +8,7 @@ data class RecordingConfiguration(
     val experimentsEnabled: Boolean,
     val directPcm: Boolean = false,
     val reuseOgg: Boolean = false,
+    val sensorTimeline: Boolean = false,
     val noiseSuppression: Boolean = true,
     val quietGate: Boolean = false
 ) {

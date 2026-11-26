@@ -105,6 +105,13 @@ open class SettingsActivity : Activity() {
                 })
             }
             optimization("direct_pcm", "PCM 直读编码器", settings.selectedDirectPcm, true, settings::setDirectPcm)
+            optimization("sensor_timeline", "录音时记录运动和心率", settings.selectedSensorTimeline, true) { enabled ->
+                settings.setSensorTimeline(enabled)
+                if (enabled && checkSelfPermission(android.Manifest.permission.BODY_SENSORS) != android.content.pm.PackageManager.PERMISSION_GRANTED) {
+                    requestPermissions(arrayOf(android.Manifest.permission.BODY_SENSORS), 42)
+                }
+            }
+            label("加速度与心率使用采集时间。未授予身体传感器权限时仅记录运动。")
             optimization("reuse_ogg", "复用 Ogg 缓冲（Opus）", settings.selectedReuseOgg,
                 settings.selectedEncoding == RecordingEncoding.OPUS, settings::setReuseOgg)
             column.addView(Button(this).apply {

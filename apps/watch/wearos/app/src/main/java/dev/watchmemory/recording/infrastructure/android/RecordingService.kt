@@ -22,6 +22,7 @@ open class RecordingService : Service(), CaptureObserver {
     private val sessions get() = graph.sessions
     private val handler = Handler(Looper.getMainLooper())
     @Volatile private var stopping = false
+    private var sensorLog: RecordingSensors? = null
     private var wakeLock: PowerManager.WakeLock? = null
     private var wakePlan: RecordingPlan? = null
     private var persistWakeEvents = false
@@ -100,8 +101,17 @@ open class RecordingService : Service(), CaptureObserver {
             stopSelf(); return
         }
         try {
-            startForeground(1, notification("正在启动录音"), ServiceInfo.FOREGROUND_SERVICE_TYPE_MICROPHONE)
             val config = graph.settings.configuration()
+            val heartGranted = config.sensorTimeline && checkSelfPermission(Manifest.permission.BODY_SENSORS) == PackageManager.PERMISSION_GRANTED
+            val micType = ServiceInfo.FOREGROUND_SERVICE_TYPE_MICROPHONE
+            var enableHeart = heartGranted
+            if (heartGranted && Build.VERSION.SDK_INT >= 34) {
+                try { startForeground(1, notification("正在启动录音"), micType or ServiceInfo.FOREGROUND_SERVICE_TYPE_HEALTH) }
+                catch (_: SecurityException) {
+                    enableHeart = false
+                    startForeground(1, notification("正在启动录音"), micType)
+                }
+            } else startForeground(1, notification("正在启动录音"), micType)
             resourcesState = readResources()
             RecordingSafety.stop(resourcesState)?.let { error(stopText(it)) }
             val diagnosticEnabled = graph.settings.diagnosticsEnabled
@@ -116,6 +126,11 @@ open class RecordingService : Service(), CaptureObserver {
             quietPaused = false; lastQuietReadAt = 0L
             lastLoudAt = runtime.startedAt; runtime.frames = 0; runtime.muted = false
             ending = false; stopReason = null; runtime.status = "正在启动录音"; runtime.busy = true
+            if (config.sensorTimeline) {
+                sensorLog = RecordingSensors(this) { event, fields ->
+                    graph.repository.append(plan.sessionId, event, fields + ("run" to plan.runId))
+                }.also { it.start(enableHeart) }
+            }
             wakePlan = plan
             persistWakeEvents = diagnosticEnabled
             wakeLock = getSystemService(PowerManager::class.java).newWakeLock(
@@ -200,6 +215,7 @@ open class RecordingService : Service(), CaptureObserver {
         stopReason = reason; runtime.status = "正在保存…"; stopping = true
     }
     private fun complete(error: String?) {
+        sensorLog?.close(); sensorLog = null
         handler.removeCallbacks(monitor)
         var finalStatus = error ?: stopReason ?: "录音已停止"
         try {
@@ -252,6 +268,7 @@ open class RecordingService : Service(), CaptureObserver {
         return builder.build()
     }
     override fun onDestroy() {
+        sensorLog?.close(); sensorLog = null
         handler.removeCallbacks(monitor); stopping = true
         releaseWakeLock("service_destroy")
         super.onDestroy()
