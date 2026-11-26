@@ -7,6 +7,7 @@
     </queries>
     <application android:label="KoeMemo" android:allowBackup="false" android:theme="@android:style/Theme.Material.Light.NoActionBar">
         <service android:name=".SyncService" android:exported="false" android:foregroundServiceType="dataSync" />
+        <activity android:name=".TranscriptionActivity" android:exported="false" />
         <activity android:name=".LibraryActivity" android:exported="true"><intent-filter>
             <action android:name="android.intent.action.MAIN"/><category android:name="android.intent.category.LAUNCHER"/>
         </intent-filter></activity>
