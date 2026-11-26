@@ -102,7 +102,7 @@ open class RecordingService : Service(), CaptureObserver {
         }
         try {
             val config = graph.settings.configuration()
-            val heartGranted = config.sensorTimeline && checkSelfPermission(Manifest.permission.BODY_SENSORS) == PackageManager.PERMISSION_GRANTED
+            val heartGranted = config.sensorTimeline && checkSelfPermission(RecordingSensors.heartPermission) == PackageManager.PERMISSION_GRANTED
             val micType = ServiceInfo.FOREGROUND_SERVICE_TYPE_MICROPHONE
             var enableHeart = heartGranted
             if (heartGranted && Build.VERSION.SDK_INT >= 34) {

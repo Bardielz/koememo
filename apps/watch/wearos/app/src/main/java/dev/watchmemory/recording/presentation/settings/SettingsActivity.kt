@@ -4,6 +4,7 @@ import dev.watchmemory.recording.presentation.RotaryScrollView
 import dev.watchmemory.bootstrap.AppGraph
 import dev.watchmemory.recording.application.RecordingSettings
 import dev.watchmemory.recording.domain.*
+import dev.watchmemory.recording.infrastructure.android.RecordingSensors
 import android.app.Activity
 import android.os.Bundle
 import android.graphics.Color
@@ -107,8 +108,8 @@ open class SettingsActivity : Activity() {
             optimization("direct_pcm", "PCM 直读编码器", settings.selectedDirectPcm, true, settings::setDirectPcm)
             optimization("sensor_timeline", "录音时记录运动和心率", settings.selectedSensorTimeline, true) { enabled ->
                 settings.setSensorTimeline(enabled)
-                if (enabled && checkSelfPermission(android.Manifest.permission.BODY_SENSORS) != android.content.pm.PackageManager.PERMISSION_GRANTED) {
-                    requestPermissions(arrayOf(android.Manifest.permission.BODY_SENSORS), 42)
+                if (enabled && checkSelfPermission(RecordingSensors.heartPermission) != android.content.pm.PackageManager.PERMISSION_GRANTED) {
+                    requestPermissions(arrayOf(RecordingSensors.heartPermission), 42)
                 }
             }
             label("加速度与心率使用采集时间。未授予身体传感器权限时仅记录运动。")
