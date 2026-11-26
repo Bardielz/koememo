@@ -104,6 +104,7 @@ class AndroidCaptureBackend(
             var hasEncodedAudio = false
             var dirty = false
             var lastSync = SystemClock.elapsedRealtime()
+            var nextAnchorAt = 0L
             var lastDiagnostics = lastSync
             var inputEnded = false
             var outputEnded = false
@@ -218,6 +219,12 @@ class AndroidCaptureBackend(
                 }
                 if (produced > 0) observer.frames(produced)
                 val now = SystemClock.elapsedRealtime()
+                if (request.configuration.sensorTimeline && now >= nextAnchorAt) {
+                    val anchor = try { mic.captureTimestamp() } catch (_: RuntimeException) { null }
+                    if (anchor != null) observer.configured(mapOf("audio_boottime_ns" to anchor.nanoTime,
+                        "audio_frame_position" to anchor.framePosition, "sample_rate" to sampleRate))
+                    nextAnchorAt = now + if (anchor == null) 5000 else 60000
+                }
                 if (gate == null && now - lastCheck >= 5000) {
                     mic.silenced?.let(observer::silenced)
                     lastCheck = now
@@ -225,6 +232,7 @@ class AndroidCaptureBackend(
                 if (now - lastDiagnostics >= 60000) { request.reportDiagnostics(); lastDiagnostics = now }
                 if (dirty && now - lastSync >= 30000) { writer.sync(); dirty = false; lastSync = now }
             }
+            if (request.configuration.sensorTimeline) observer.configured(mapOf("capture_end_samples" to (gate?.capturedSamples ?: samples)))
             if (gate?.paused == true) observer.quietTransition("stop", gate.capturedSamples, gate.heldSamples, 0)
         } catch (error: Throwable) {
             primaryFailure = error

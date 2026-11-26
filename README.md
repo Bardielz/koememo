@@ -43,6 +43,11 @@ KoeMemo 由 Kotlin 原生手表端和安卓手机端组成。手表负责熄屏�
 
 手表端「设置 → 实验功能 → 静音时暂停写入」默认关闭。开启后，录音期间连续约 10 秒低于 −55 dBFS 会暂停向编码器送入音频，麦克风继续监听。短时音量达到约 −50 dBFS 时恢复，并补回最近 1 秒。轻声也可能被省略，需要完整留存时可关闭。播放时间会跳过被省略的静音，事件日志中的 `quiet_gate` 记录每次切换时的采集样本位置及补回样本数。点「暂停」会结束监听，须手动继续录音。
 
+「用人声概率判断静音」可在实验设置开启静音暂停后选择，默认关闭。手表使用 Silero VAD v5.1 单线程 CPU 推理。检测支路把单声道输入按组平均到 8 kHz，以连续 32 ms 帧推理并跨读取批次保留上下文，保存的音频仍使用所选采样率。每个读取批次取最高人声分数，达到 0.35 时继续写入，连续约 10 秒低于此值后暂停；达到 0.60 时恢复并补回最近最多一秒。模型不可用时继续完整录音。阈值为实验初值，音乐、远讲和轻声可能被省略。
+模型来自 [Silero VAD v5.1](https://github.com/snakers4/silero-vad/tree/v5.1)，MIT 许可随模型打包。ONNX 文件 SHA-256 为 `2623a2953f6ff3d2c1e61740c6cdb7168133479b267dfef114a4a3cc5bdd788f`。
+
+「录音时记录运动和心率」是默认关闭的手表实验项。在录音期间请求约 5 Hz 的加速度和设备报告的心率，停止时注销。用户允许身体传感器权限且系统提供心率读数时才会有 BPM。事件日志保存传感器采集的 BOOTTIME 纳秒时间、类型（1 为加速度 m/s²，21 为 BPM）、精度和数值，并周期性保存 AudioRecord 同一时基的帧位置。导出后运行 `python3 tools/audio/align-sensors.py /path/to/events.jsonl` 查看采集样本和片段所属录音的播放毫秒数。被省略的静音、无音频锚点等情况会明确标记。传感器日志仅随手表日志导出。
+
 ## 性能诊断
 
 手表设置 → 实验功能 → 性能与耗电统计，默认关闭。暂停录音后可修改，下次录音或同步尝试生效。设置页可查看最近同步统计。
@@ -114,7 +119,7 @@ python3 tools/audio/audit.py /path/to/new-export/files/recordings
     → 手机按需同步已关闭的文件 → 校验 SHA-256 → 播放或导出
 ```
 
-手机离线转写目前处于[方案与验收设计阶段](docs/phone-offline-transcription.md)。[Watch5 卸载探针](tools/probes/watch-offload/README.md)和 [RNNoise CPU/GPU 对照](tools/probes/rnnoise-gpu/README.md)是单独运行的实验工具。
+手机可对同步片段运行 [SenseVoice INT8 本地转写](apps/phone/README.md)，按时间区间回听。[Watch5 卸载探针](tools/probes/watch-offload/README.md)和 [RNNoise CPU/GPU 对照](tools/probes/rnnoise-gpu/README.md)是单独运行的实验工具。
 
 - PCM 按约 128 ms 批量读取；编码器输入较小时拆分批次，停止时先送完已读数据，再送 EOS。
 - AudioRecord 缓冲取一秒音频与系统最小缓冲两倍中的较大者；文件写入使用 32 KiB 缓冲。
@@ -175,6 +180,3 @@ docs/               # 架构与变更记录
 ## 开发工作流
 
 所有后续特性从最新 `origin/master` 创建 `feature/<name>` 分支；修复使用 `fix/<name>`，维护使用 `chore/<name>`。通过 Git 提交、推送分支和 PR 合并到 `master`，不直接在主分支开发。具体步骤见 [贡献指南](CONTRIBUTING.md)。
-
-「用人声概率判断静音」可在实验设置开启静音暂停后选择，默认关闭。手表使用 Silero VAD v5.1 单线程 CPU 推理。检测支路把单声道输入按组平均到 8 kHz，以连续 32 ms 帧推理并跨读取批次保留上下文，保存的音频仍使用所选采样率。每个读取批次取最高人声分数，达到 0.35 时继续写入，连续约 10 秒低于此值后暂停；达到 0.60 时恢复并补回最近最多一秒。模型不可用时继续完整录音。阈值为实验初值，音乐、远讲和轻声可能被省略。
-模型来自 [Silero VAD v5.1](https://github.com/snakers4/silero-vad/tree/v5.1)，MIT 许可随模型打包。ONNX 文件 SHA-256 为 `2623a2953f6ff3d2c1e61740c6cdb7168133479b267dfef114a4a3cc5bdd788f`。
