@@ -13,15 +13,20 @@ class DiagnosticSettingsTest {
         val state = RecordingRuntime(); val settings = RecordingSettings(repo, state, false)
         val defaults = settings.configuration()
         assertFalse(settings.diagnosticsEnabled)
+        assertFalse(defaults.quietGate)
+        assertThrows(IllegalStateException::class.java) { settings.setQuietGate(true) }
         assertThrows(IllegalStateException::class.java) { settings.setDiagnostics(true) }
-        settings.setExperiments(true); settings.setDiagnostics(true)
+        settings.setExperiments(true); settings.setDiagnostics(true); settings.setQuietGate(true)
+        assertTrue(settings.configuration().quietGate)
         assertTrue(settings.diagnosticsEnabled)
         state.busy = true
         assertThrows(IllegalStateException::class.java) { settings.setDiagnostics(false) }
+        assertThrows(IllegalStateException::class.java) { settings.setQuietGate(false) }
         state.busy = false; settings.setExperiments(false)
         assertFalse(settings.diagnosticsEnabled); assertTrue(settings.selectedDiagnostics)
         assertEquals(defaults, settings.configuration())
         settings.setExperiments(true); assertTrue(settings.diagnosticsEnabled)
+        assertTrue(settings.configuration().quietGate)
     }
 
     @Test fun audioOptimizationsAreIndependentAndRespectMasterAndCodec() {

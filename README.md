@@ -41,11 +41,15 @@ KoeMemo 由 Kotlin 原生手表端和安卓手机端组成。手表负责熄屏�
 
 每次只启用一种配置，不做三路同时录音。实验功能关闭后仍保留选择，便于再次开启。
 
+手表端「设置 → 实验功能 → 静音时暂停写入」默认关闭。开启后，录音期间连续约 10 秒低于 −55 dBFS 会暂停向编码器送入音频，麦克风继续监听。短时音量达到约 −50 dBFS 时恢复，并补回最近 1 秒。轻声也可能被省略，需要完整留存时可关闭。播放时间会跳过被省略的静音，事件日志中的 `quiet_gate` 记录每次切换时的采集样本位置及补回样本数。点「暂停」会结束监听，须手动继续录音。
+
 ## 性能诊断
 
 手表设置 → 实验功能 → 性能与耗电统计，默认关闭。暂停录音后可修改，下次录音或同步尝试生效。设置页可查看最近同步统计。
 开启后每分钟汇总采集、编码交互、复制、封装写盘和同步的调用次数、耗时及当前线程 CPU 时间，并在停止时输出最终累计值。高频编解码调用采用抽样计时。录音 CPU 唤醒锁覆盖启动和保存阶段，操作可通过 `KoeMemoWakeLock` 日志追踪。正式续航测试应关闭诊断。
 所有录音均以低频记录充电状态、电压、温度和电荷计数；电流保留系统原始值，不直接换算功率。详见 [诊断与对照测试](docs/performance-diagnostics.md)。
+
+RNNoise 的 GPU 对照实验使用独立的文件探针，构建与复现步骤见 [探针说明](tools/probes/rnnoise-gpu/README.md)。
 
 ## 构建
 
@@ -105,14 +109,17 @@ python3 tools/audio/audit.py /path/to/new-export/files/recordings
 ## 实现说明
 
 ```text
-Activity → 麦克风前台服务 → AudioRecord → 系统 MediaCodec
-                                           ├─ AAC → ADTS 分段
-                                           └─ Opus → Ogg 分段
+手表手动开始 → 麦克风前台服务 → AudioRecord（可用时启用系统降噪）
+    → 单声道 PCM → 可选静音判定 → MediaCodec → AAC/ADTS 或 Opus/Ogg 分段
+    → 手机按需同步已关闭的文件 → 校验 SHA-256 → 播放或导出
 ```
+
+手机离线转写目前处于[方案与验收设计阶段](docs/phone-offline-transcription.md)。[Watch5 卸载探针](tools/probes/watch-offload/README.md)和 [RNNoise CPU/GPU 对照](tools/probes/rnnoise-gpu/README.md)是单独运行的实验工具。
 
 - PCM 按约 128 ms 批量读取；编码器输入较小时拆分批次，停止时先送完已读数据，再送 EOS。
 - AudioRecord 缓冲取一秒音频与系统最小缓冲两倍中的较大者；文件写入使用 32 KiB 缓冲。
 - 实验设置中的「PCM 直读编码器」允许支持直接读取的采集后端将 PCM 写入 MediaCodec 输入缓冲区。单次读取受编码器容量限制，可在录音日志中查看实际启用或回退情况。
+- 同时开启「静音时暂停写入」和「PCM 直读编码器」时，录音使用普通 PCM 缓冲，以便在编码前判定音量并保留恢复时的前一秒。日志记录 `direct_pcm_fallback_reason=quiet_gate`。Ogg 缓冲复用仍可独立使用。
 - 「复用 Ogg 缓冲（Opus）」会复用已写出的音频包和 Ogg 页缓冲，分段预热所需的包保留到使用结束。两个开关默认关闭，可分别启用，下次开始录音时生效。
 - Opus 将约一秒音频包合为一页；分段复制至少 80 ms 历史包供解码器预热，通过 pre-skip 排除重复播放。
 - 兼容 Android 包装的 Opus 配置头，将编码延迟换算为 Ogg 的 48 kHz 时间基准。

@@ -1,0 +1,83 @@
+#version 310 es
+// RNNoise v0.1 compute_rnn port. See LICENSE.rnnoise.
+precision highp float;
+precision highp int;
+// MODEL_OFFSETS
+layout(local_size_x=128) in;
+layout(std430,binding=0) readonly buffer Weights { uint packedWeights[]; };
+layout(std430,binding=1) readonly buffer Features { float features[]; };
+layout(std430,binding=2) writeonly buffer Predictions { float predictions[]; };
+layout(std430,binding=3) buffer PersistentState { float saved[]; };
+uniform int frames;
+shared float state[168]; // VAD, noise, denoise
+shared float x[114], dense[24], resetGate[96];
+float weight(int idx) {
+    uint b = (packedWeights[idx / 4] >> uint(8 * (idx % 4))) & 255u;
+    return float(int(b ^ 128u) - 128);
+}
+float sigmoid(float v) { return 0.5 + 0.5 * tanh(clamp(0.5*v, -8.0, 8.0)); }
+
+void gru(int inputs, int neurons, int base, int bias, int weights, int recurrent) {
+    int i = int(gl_LocalInvocationID.x);
+    float z = 0.0;
+    float next = 0.0;
+    if (i < neurons) {
+        vec3 sums = vec3(weight(bias+i), weight(bias+neurons+i), weight(bias+2*neurons+i));
+        for (int j=0; j<inputs; ++j) {
+            int k = weights + j*neurons*3+i;
+            sums += x[j] * vec3(weight(k), weight(k+neurons), weight(k+2*neurons));
+        }
+        for (int j=0; j<neurons; ++j) {
+            int k = recurrent+j*neurons*3+i;
+            sums.xy += state[base+j] * vec2(weight(k), weight(k+neurons));
+        }
+        z = sigmoid(sums.x / 256.0);
+        resetGate[i] = sigmoid(sums.y / 256.0);
+        next = sums.z;
+    }
+    barrier();
+    if (i < neurons) {
+        for (int j=0; j<neurons; ++j)
+            next += weight(recurrent+(3*j+2)*neurons+i)*state[base+j]*resetGate[j];
+        next = z*state[base+i] + (1.0-z)*max(0.0,next / 256.0);
+    }
+    barrier();
+    if (i < neurons) state[base+i] = next;
+    barrier();
+}
+void main() {
+    int i = int(gl_LocalInvocationID.x);
+    for (int j=i; j<168; j+=128) state[j] = saved[j];
+    barrier();
+    for (int f=0; f<frames; ++f) {
+        if (i<24) {
+            float sum = weight(INPUT_DENSE_BIAS+i);
+            for (int j=0; j<42; ++j)
+                sum += features[42*f+j]*weight(INPUT_DENSE_WEIGHTS+24*j+i);
+            dense[i] = tanh(clamp(sum/256.0,-8.0,8.0));
+            x[i] = dense[i];
+        }
+        barrier();
+        gru(24,24,0,VAD_GRU_BIAS,VAD_GRU_WEIGHTS,VAD_GRU_RECURRENT_WEIGHTS);
+        if (i<24) { x[i]=dense[i]; x[24+i]=state[i]; }
+        if (i<42) x[48+i]=features[42*f+i];
+        barrier();
+        gru(90,48,24,NOISE_GRU_BIAS,NOISE_GRU_WEIGHTS,NOISE_GRU_RECURRENT_WEIGHTS);
+        if (i<72) x[i]=state[i];
+        if (i<42) x[72+i]=features[42*f+i];
+        barrier();
+        gru(114,96,72,DENOISE_GRU_BIAS,DENOISE_GRU_WEIGHTS,DENOISE_GRU_RECURRENT_WEIGHTS);
+        if (i<23) {
+            bool vad = i==22;
+            int n = vad ? 24 : 96;
+            int base = vad ? 0 : 72;
+            int offset = vad ? VAD_OUTPUT_WEIGHTS : DENOISE_OUTPUT_WEIGHTS+i;
+            int stride = vad ? 1 : 22;
+            float sum = weight(vad ? VAD_OUTPUT_BIAS : DENOISE_OUTPUT_BIAS+i);
+            for (int j=0; j<n; ++j) sum += state[base+j]*weight(offset+j*stride);
+            predictions[23*f+i] = sigmoid(sum/256.0);
+        }
+        barrier();
+    }
+    for (int j=i; j<168; j+=128) saved[j] = state[j];
+}

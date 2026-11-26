@@ -80,6 +80,14 @@ open class SettingsActivity : Activity() {
         }
         if (settings.experimentsEnabled) {
             column.addView(Switch(this).apply {
+                controls["quietGate"] = this
+                text = "静音时暂停写入"
+                isChecked = settings.selectedQuietGate
+                isEnabled = !graph.state.busy
+                setOnCheckedChangeListener { _, value -> change { settings.setQuietGate(value) } }
+            })
+            label("连续安静约 10 秒后省略静音，麦克风继续监听。声音恢复时保留前 1 秒，播放时长会缩短。")
+            column.addView(Switch(this).apply {
                 controls["diagnostics"] = this
                 text = "性能与耗电统计"; textSize = 14f
                 isChecked = settings.selectedDiagnostics

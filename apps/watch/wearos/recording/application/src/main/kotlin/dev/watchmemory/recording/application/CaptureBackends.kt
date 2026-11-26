@@ -8,6 +8,8 @@ interface CaptureObserver {
     fun configured(fields: Map<String, Any>)
     fun level(db: Double)
     fun frames(count: Int)
+    fun quietProgress() {}
+    fun quietTransition(action: String, capturedSamples: Long, heldSamples: Long, replaySamples: Int) {}
     fun silenced(value: Boolean)
 }
 

@@ -31,6 +31,8 @@ open class RecordingService : Service(), CaptureObserver {
     private var ending = false
     private var stopReason: String? = null
     @Volatile private var lastLoudAt = 0L
+    @Volatile private var quietPaused = false
+    @Volatile private var lastQuietReadAt = 0L
     private var lastTelemetry = 0L
     private var lastResources = 0L
     private var resourcesState = DeviceResources(-1, 0)
@@ -50,11 +52,12 @@ open class RecordingService : Service(), CaptureObserver {
             if (stopReason == null) {
                 runtime.status = when {
                     runtime.muted -> "麦克风被系统静音"
+                    quietPaused -> "静音中，正在监听"
                     now - runtime.lastFrameAt > 5000 -> "等待音频数据"
                     now - lastLoudAt > 30000 -> "声音很轻，请检查收音"
                     else -> "正在录音"
                 }
-                RecordingSafety.stop(resourcesState, now - runtime.lastFrameAt)?.let { requestStop(stopText(it)) }
+                RecordingSafety.stop(resourcesState, now - maxOf(runtime.lastFrameAt, lastQuietReadAt))?.let { requestStop(stopText(it)) }
             }
             if (now - lastTelemetry >= 60000) {
                 log("telemetry", mapOf("battery_percent" to resourcesState.batteryPercent, "dbfs" to runtime.db,
@@ -110,6 +113,7 @@ open class RecordingService : Service(), CaptureObserver {
                 "diagnostics_enabled" to diagnosticEnabled) + graph.telemetry.snapshot())
             lastResources = SystemClock.elapsedRealtime(); lastTelemetry = lastResources
             runtime.startedAt = SystemClock.elapsedRealtime(); runtime.lastFrameAt = runtime.startedAt
+            quietPaused = false; lastQuietReadAt = 0L
             lastLoudAt = runtime.startedAt; runtime.frames = 0; runtime.muted = false
             ending = false; stopReason = null; runtime.status = "正在启动录音"; runtime.busy = true
             wakePlan = plan
@@ -225,6 +229,12 @@ open class RecordingService : Service(), CaptureObserver {
         }
         runtime.frames += count
         runtime.lastFrameAt = SystemClock.elapsedRealtime()
+    }
+    override fun quietProgress() { lastQuietReadAt = SystemClock.elapsedRealtime() }
+    override fun quietTransition(action: String, capturedSamples: Long, heldSamples: Long, replaySamples: Int) {
+        quietPaused = action == "pause"
+        sessions.recordEvent("quiet_gate", mapOf("action" to action, "captured_samples" to capturedSamples,
+            "held_samples" to heldSamples, "replay_samples" to replaySamples))
     }
     override fun silenced(value: Boolean) {
         if (value != runtime.muted) { runtime.muted = value; handler.post { log("system_silenced", mapOf("value" to value)) } }

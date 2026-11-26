@@ -35,7 +35,10 @@ class AndroidCaptureBackend(
             check(mic.sampleRate == sampleRate) { "Unexpected client sample rate: ${mic.sampleRate}" }
             // Read 128 ms at a time even when the codec accepts smaller input buffers.
             val pcm = ByteArray(sampleRate * 2 * 128 / 1000)
-            var direct = request.configuration.directPcm
+            val gate = if (request.configuration.quietGate) QuietGate(sampleRate) else null
+            var micSilenced: Boolean? = null
+            var inputPcm = pcm
+            var direct = request.configuration.directPcm && gate == null
             val format = MediaFormat.createAudioFormat(AudioFormats.mime(encoding), sampleRate, 1).apply {
                 if (encoding == RecordingEncoding.AAC) setInteger(MediaFormat.KEY_AAC_PROFILE, MediaCodecInfo.CodecProfileLevel.AACObjectLC)
                 setInteger(MediaFormat.KEY_BIT_RATE, bitrate)
@@ -55,11 +58,15 @@ class AndroidCaptureBackend(
                 "client_sample_rate" to mic.sampleRate,
                 "device_sample_rate" to (mic.deviceSampleRate ?: 0),
                 "audio_record_buffer_frames" to mic.bufferSizeInFrames,
-                "direct_pcm_requested" to direct, "reuse_ogg" to request.configuration.reuseOgg,
+                "direct_pcm_requested" to request.configuration.directPcm, "reuse_ogg" to request.configuration.reuseOgg,
                 "pcm_batch_bytes" to pcm.size, "encoder" to codec.name, "encoding" to encoding.name, "target_bitrate" to bitrate,
                 "encoder_software_only" to codec.codecInfo.isSoftwareOnly,
                 "encoder_hardware_accelerated" to codec.codecInfo.isHardwareAccelerated,
                 "encoder_vendor" to codec.codecInfo.isVendor))
+            if (request.configuration.directPcm && gate != null) {
+                observer.configured(mapOf("direct_pcm_active" to false, "direct_pcm_fallback" to true,
+                    "direct_pcm_fallback_reason" to "quiet_gate"))
+            }
             val encoded = ByteArray(8191)
             var pending = 0
             var offset = 0
@@ -81,6 +88,8 @@ class AndroidCaptureBackend(
             }
             var samples = 0L
             var lastCheck = 0L
+            var hasEncodedAudio = false
+            var dirty = false
             var lastSync = SystemClock.elapsedRealtime()
             var lastDiagnostics = lastSync
             var inputEnded = false
@@ -96,8 +105,32 @@ class AndroidCaptureBackend(
                         offset = 0
                         if (pending <= 0 || pending % 2 != 0) throw IOException("Microphone read error: $pending")
                         reportLevel(pending)
+                        if (gate != null) {
+                            val now = SystemClock.elapsedRealtime()
+                            if (now - lastCheck >= 5000 || lastCheck == 0L) {
+                                micSilenced = mic.silenced
+                                micSilenced?.let(observer::silenced)
+                                lastCheck = now
+                            }
+                            val wasPaused = gate.paused
+                            // An encoder which never produces its first packet must still time out.
+                            val output = gate.accept(pcm, pending, hasEncodedAudio && micSilenced == false)
+                            if (gate.paused) observer.quietProgress()
+                            if (wasPaused != gate.paused) {
+                                observer.quietTransition(if (gate.paused) "pause" else "resume",
+                                    gate.capturedSamples, gate.heldSamples, gate.replaySamples)
+                            }
+                            inputPcm = output ?: pcm
+                            pending = when {
+                                output == null -> 0
+                                output === pcm -> pending
+                                else -> output.size
+                            }
+                        }
                     }
-                    val slot = diagnostics.measure(RecordingStage.ENCODER_INPUT_WAIT) { codec.dequeueInputBuffer(10000) }
+                    val slot = if (direct || offset < pending || request.stopping()) {
+                        diagnostics.measure(RecordingStage.ENCODER_INPUT_WAIT) { codec.dequeueInputBuffer(10000) }
+                    } else -1
                     if (slot >= 0) {
                         val input = checkNotNull(codec.getInputBuffer(slot))
                         input.clear()
@@ -121,7 +154,7 @@ class AndroidCaptureBackend(
                         }
                         val count = directCount ?: min(pending - offset, capacity)
                         diagnostics.measure(RecordingStage.ENCODER_INPUT) {
-                            if (directCount == null && count > 0) input.put(pcm, offset, count)
+                            if (directCount == null && count > 0) input.put(inputPcm, offset, count)
                             codec.queueInputBuffer(slot, 0, count, samples * 1_000_000 / sampleRate,
                                 if (count == 0) MediaCodec.BUFFER_FLAG_END_OF_STREAM else 0)
                         }
@@ -151,6 +184,8 @@ class AndroidCaptureBackend(
                             check(info.size <= encoded.size) { "Encoded packet too large" }
                             diagnostics.measure(RecordingStage.OUTPUT_COPY) { output.get(encoded, 0, info.size) }
                             writer.write(encoded, info.presentationTimeUs, info.size)
+                            hasEncodedAudio = true
+                            dirty = true
                             produced++
                         }
                         outputEnded = info.flags and MediaCodec.BUFFER_FLAG_END_OF_STREAM != 0
@@ -159,13 +194,14 @@ class AndroidCaptureBackend(
                 }
                 if (produced > 0) observer.frames(produced)
                 val now = SystemClock.elapsedRealtime()
-                if (now - lastCheck >= 5000) {
+                if (gate == null && now - lastCheck >= 5000) {
                     mic.silenced?.let(observer::silenced)
                     lastCheck = now
                 }
                 if (now - lastDiagnostics >= 60000) { request.reportDiagnostics(); lastDiagnostics = now }
-                if (now - lastSync >= 30000) { writer.sync(); lastSync = now }
+                if (dirty && now - lastSync >= 30000) { writer.sync(); dirty = false; lastSync = now }
             }
+            if (gate?.paused == true) observer.quietTransition("stop", gate.capturedSamples, gate.heldSamples, 0)
         } catch (error: Throwable) {
             primaryFailure = error
             throw error
