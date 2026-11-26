@@ -44,6 +44,14 @@ open class SettingsActivity : Activity() {
             column.addView(this)
         }
         label("设置")
+        column.addView(Switch(this).apply {
+            controls["noise_suppression"] = this
+            text = "系统降噪"
+            isChecked = settings.noiseSuppression
+            isEnabled = !graph.state.busy
+            setOnCheckedChangeListener { _, enabled -> change { settings.setNoiseSuppression(enabled) } }
+        })
+        label("下次录音生效。设备不支持时照常录音。原始音源保留原始输入。")
         val toggle = Switch(this).apply {
             controls["experiments"] = this
             text = "实验功能"; textSize = 15f

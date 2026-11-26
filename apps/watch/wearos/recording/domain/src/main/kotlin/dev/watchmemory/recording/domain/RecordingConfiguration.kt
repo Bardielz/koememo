@@ -7,7 +7,8 @@ data class RecordingConfiguration(
     val bitrate: Int,
     val experimentsEnabled: Boolean,
     val directPcm: Boolean = false,
-    val reuseOgg: Boolean = false
+    val reuseOgg: Boolean = false,
+    val noiseSuppression: Boolean = true
 ) {
     init {
         require(sampleRate in ExperimentPolicy.sampleRates)

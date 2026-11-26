@@ -24,6 +24,7 @@ class AndroidCaptureBackend(
         val (source, sampleRate, encoding, bitrate) = request.configuration
         val observer = request.observer
         val diagnostics = request.diagnostics
+        val suppression = SessionNoiseSuppression()
         var mic: PcmInput? = null
         var codec: MediaCodec? = null
         var codecStarted = false
@@ -46,6 +47,8 @@ class AndroidCaptureBackend(
             codec.configure(format, null, null, MediaCodec.CONFIGURE_FLAG_ENCODE)
             codec.start()
             codecStarted = true
+            val ns = suppression.configure(mic.audioSessionId, source, request.configuration.noiseSuppression)
+            observer.configured(ns)
             mic.start()
             micStarted = true
             observer.configured(mapOf("capture_backend" to id, "requested_sample_rate" to sampleRate,
@@ -176,6 +179,7 @@ class AndroidCaptureBackend(
                 }
             }
             cleanup("MIC_STOP") { if (micStarted) mic?.stop() }
+            suppression.release()
             cleanup("MIC_RELEASE") { mic?.release() }
             cleanup("CODEC_STOP") { if (codecStarted) codec?.stop() }
             cleanup("CODEC_RELEASE") { codec?.release() }
