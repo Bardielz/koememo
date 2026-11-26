@@ -23,11 +23,51 @@ class OpusWriterTest {
         assertThrows(IllegalArgumentException::class.java) { OpusHeaders.identification(csd.copyOf(40)) }
     }
     @Test fun rotationPrerollCrcHashesAndExplicitSyncPreserveDuration() {
+        for (reuse in listOf(false, true)) verifyRotation(reuse)
+    }
+
+    @Test fun pooledPagesPreserveVariablePayloadsAcrossRotation() {
+        val dir = Files.createTempDirectory("ogg-pool").toFile()
+        try {
+            fun render(prefix: String, reuse: Boolean): List<ByteArray> {
+                OpusSegmentWriter(dir, prefix, 1_200_000L, reuse) { _, _, _, _, _ -> }.use { writer ->
+                    writer.configureHeader(header())
+                    val lengths = intArrayOf(3, 254, 255, 256, 510, 900)
+                    val input = ByteArray(1024)
+                    repeat(190) { i ->
+                        input.fill(i.toByte())
+                        input[0] = 0xf8.toByte()
+                        writer.write(input, i * 20_000L, lengths[i % lengths.size])
+                        if (i % 39 == 0) writer.sync()
+                    }
+                }
+                return dir.listFiles()!!.filter { it.name.startsWith(prefix) }.sorted().map { file ->
+                    val data = file.readBytes()
+                    var start = 0
+                    while (start < data.size) {
+                        val count = data[start + 26].toInt() and 255
+                        val size = (0 until count).sumOf { data[start + 27 + it].toInt() and 255 }
+                        // Each stream gets a fresh serial number and its corresponding page CRC.
+                        data.fill(0, start + 14, start + 18)
+                        data.fill(0, start + 22, start + 26)
+                        start += 27 + count + size
+                    }
+                    data
+                }
+            }
+            val expected = render("baseline", false)
+            val pooled = render("pooled", true)
+            assertEquals(expected.size, pooled.size)
+            expected.indices.forEach { assertArrayEquals(expected[it], pooled[it]) }
+        } finally { dir.deleteRecursively() }
+    }
+
+    private fun verifyRotation(reuse: Boolean) {
         val dir = Files.createTempDirectory("ogg").toFile()
         try {
             val hashes = mutableMapOf<String, String>()
             val head = header().apply { this[10] = 0x38; this[11] = 1 }
-            OpusSegmentWriter(dir, "run", 1_000_000) { name, _, _, _, hash -> hashes[name] = hash }.use { writer ->
+            OpusSegmentWriter(dir, "run", 1_000_000, reuse) { name, _, _, _, hash -> hashes[name] = hash }.use { writer ->
                 writer.configureHeader(head)
                 repeat(151) { i ->
                     writer.write(byteArrayOf(0xf8.toByte(), 0xff.toByte(), 0xfe.toByte()), i * 20000L)
