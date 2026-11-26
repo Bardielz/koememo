@@ -1,0 +1,7 @@
+plugins { id 'com.android.application' version '8.9.2' }
+
+android {
+    namespace 'dev.koememo.offloadprobe'
+    compileSdk 35
+    defaultConfig { minSdk 30; targetSdk 35 }
+}
