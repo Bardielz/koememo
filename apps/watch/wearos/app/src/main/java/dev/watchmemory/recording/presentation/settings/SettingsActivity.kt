@@ -104,6 +104,9 @@ open class SettingsActivity : Activity() {
                     setOnCheckedChangeListener { _, value -> change { save(value) } }
                 })
             }
+            optimization("voice_probability", "用人声概率判断静音", settings.selectedVoiceProbability,
+                settings.selectedQuietGate, settings::setVoiceProbability)
+            if (settings.selectedVoiceProbability && settings.selectedQuietGate) label("人声概率达到 60% 时恢复，轻声可能被省略。")
             optimization("direct_pcm", "PCM 直读编码器", settings.selectedDirectPcm, true, settings::setDirectPcm)
             optimization("reuse_ogg", "复用 Ogg 缓冲（Opus）", settings.selectedReuseOgg,
                 settings.selectedEncoding == RecordingEncoding.OPUS, settings::setReuseOgg)

@@ -5,13 +5,15 @@ import dev.watchmemory.recording.domain.*
 data class ExperimentOptions(val enabled: Boolean = false, val source: String = "MIC", val sampleRate: Int = 16000,
     val encoding: String = "AAC", val aacBitrate: Int = 48000, val opusBitrate: Int = 24000, val diagnostics: Boolean = false,
     val backend: String? = null, val directPcm: Boolean = false, val reuseOgg: Boolean = false,
-    val noiseSuppression: Boolean = true, val quietGate: Boolean = false)
+    val noiseSuppression: Boolean = true, val quietGate: Boolean = false, val voiceProbability: Boolean = false)
 interface SettingsRepository { fun load(): ExperimentOptions; fun save(value: ExperimentOptions) }
 class RecordingSettings(private val repository: SettingsRepository, private val state: RecordingReadModel, val rawSupported: Boolean) {
     val noiseSuppression get() = repository.load().noiseSuppression
     fun setNoiseSuppression(enabled: Boolean) = change(false) { it.copy(noiseSuppression = enabled) }
     val experimentsEnabled get() = repository.load().enabled
     val diagnosticsEnabled get() = repository.load().let { it.enabled && it.diagnostics }
+    val selectedVoiceProbability get() = repository.load().voiceProbability
+    fun setVoiceProbability(value: Boolean) = change { it.copy(voiceProbability = value) }
     val selectedQuietGate get() = repository.load().quietGate
     fun setQuietGate(value: Boolean) = change { it.copy(quietGate = value) }
     val selectedDirectPcm get() = repository.load().directPcm
@@ -33,7 +35,8 @@ class RecordingSettings(private val repository: SettingsRepository, private val 
             RecordingEncoding.bitrate(options.enabled, encoding, if (encoding == RecordingEncoding.AAC) options.aacBitrate else options.opusBitrate), options.enabled,
             directPcm = options.enabled && options.directPcm,
             reuseOgg = options.enabled && options.reuseOgg && encoding == RecordingEncoding.OPUS,
-            noiseSuppression = options.noiseSuppression, quietGate = options.enabled && options.quietGate)
+            noiseSuppression = options.noiseSuppression, quietGate = options.enabled && options.quietGate,
+            voiceProbability = options.enabled && options.quietGate && options.voiceProbability)
     }
     private fun change(experimental: Boolean = true, update: (ExperimentOptions) -> ExperimentOptions) {
         check(!state.busy) { "请先暂停录音" }
