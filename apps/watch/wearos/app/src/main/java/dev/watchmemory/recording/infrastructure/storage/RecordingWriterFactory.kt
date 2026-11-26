@@ -14,6 +14,6 @@ class RecordingWriterFactory(private val repository: FileRecordingRepository) {
         val directory = repository.directory(plan.sessionId)
         return if (config.encoding == RecordingEncoding.AAC)
             SegmentWriter(directory, plan.runId, sampleRate = config.sampleRate, onClosed = closed)
-        else OpusSegmentWriter(directory, plan.runId, onClosed = closed)
+        else OpusSegmentWriter(directory, plan.runId, reuseBuffers = config.reuseOgg, onClosed = closed)
     }
 }

@@ -6,6 +6,9 @@ data class RecordingConfiguration(
     val encoding: RecordingEncoding,
     val bitrate: Int,
     val experimentsEnabled: Boolean,
+    val directPcm: Boolean = false,
+    val reuseOgg: Boolean = false,
+    val noiseSuppression: Boolean = true,
     val quietGate: Boolean = false
 ) {
     init {

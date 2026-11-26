@@ -44,6 +44,14 @@ open class SettingsActivity : Activity() {
             column.addView(this)
         }
         label("设置")
+        column.addView(Switch(this).apply {
+            controls["noise_suppression"] = this
+            text = "系统降噪"
+            isChecked = settings.noiseSuppression
+            isEnabled = !graph.state.busy
+            setOnCheckedChangeListener { _, enabled -> change { settings.setNoiseSuppression(enabled) } }
+        })
+        label("下次录音生效。设备不支持时照常录音。原始音源保留原始输入。")
         val toggle = Switch(this).apply {
             controls["experiments"] = this
             text = "实验功能"; textSize = 15f
@@ -87,6 +95,18 @@ open class SettingsActivity : Activity() {
                 setOnCheckedChangeListener { _, value -> change { settings.setDiagnostics(value) } }
             })
             label("采集录音性能与同步耗电统计。下次录音或同步尝试生效。")
+            fun optimization(key: String, title: String, selected: Boolean, available: Boolean, save: (Boolean) -> Unit) {
+                column.addView(Switch(this).apply {
+                    controls[key] = this
+                    text = title
+                    isChecked = selected
+                    isEnabled = !graph.state.busy && available
+                    setOnCheckedChangeListener { _, value -> change { save(value) } }
+                })
+            }
+            optimization("direct_pcm", "PCM 直读编码器", settings.selectedDirectPcm, true, settings::setDirectPcm)
+            optimization("reuse_ogg", "复用 Ogg 缓冲（Opus）", settings.selectedReuseOgg,
+                settings.selectedEncoding == RecordingEncoding.OPUS, settings::setReuseOgg)
             column.addView(Button(this).apply {
                 text = "探测三星性能 SDK"
                 isEnabled = !probing && PerformanceProbe.result == null && !graph.state.busy
