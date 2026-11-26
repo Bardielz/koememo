@@ -15,10 +15,15 @@ internal class RecordingSensors(context: Context, private val write: (String, Ma
     private var closed = false
     private var lastMotionNs = Long.MIN_VALUE
 
+    companion object {
+        val heartPermission: String get() = if (android.os.Build.VERSION.SDK_INT >= 36)
+            "android.permission.health.READ_HEART_RATE" else android.Manifest.permission.BODY_SENSORS
+    }
+
     fun start(heartGranted: Boolean) {
         fun register(type: Int): String {
-            val sensor = manager.getDefaultSensor(type) ?: return "unavailable"
             return try {
+                val sensor = manager.getDefaultSensor(type) ?: return "unavailable"
                 if (manager.registerListener(this, sensor, 200000, 2000000)) "registered" else "rejected"
             } catch (e: RuntimeException) { e.javaClass.simpleName }
         }
