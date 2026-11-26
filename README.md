@@ -114,7 +114,7 @@ python3 tools/audio/audit.py /path/to/new-export/files/recordings
     → 手机按需同步已关闭的文件 → 校验 SHA-256 → 播放或导出
 ```
 
-手机离线转写目前处于[方案与验收设计阶段](docs/phone-offline-transcription.md)。[Watch5 卸载探针](tools/probes/watch-offload/README.md)和 [RNNoise CPU/GPU 对照](tools/probes/rnnoise-gpu/README.md)是单独运行的实验工具。
+手机可对同步片段运行 [SenseVoice INT8 本地转写](apps/phone/README.md)，按时间区间回听。[Watch5 卸载探针](tools/probes/watch-offload/README.md)和 [RNNoise CPU/GPU 对照](tools/probes/rnnoise-gpu/README.md)是单独运行的实验工具。
 
 - PCM 按约 128 ms 批量读取；编码器输入较小时拆分批次，停止时先送完已读数据，再送 EOS。
 - AudioRecord 缓冲取一秒音频与系统最小缓冲两倍中的较大者；文件写入使用 32 KiB 缓冲。
