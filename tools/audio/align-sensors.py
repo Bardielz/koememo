@@ -62,7 +62,15 @@ def align(path):
                         status = 'unfinished_gap'
                     if status == 'aligned':
                         media_ms = round((frame-skipped)*1000/run['rate'], 3)
-            yield dict(run=e['run'], boottime_ns=ns, type=sensor, accuracy=accuracy, values=values,
+            quality = None
+            if sensor == 21:
+                if accuracy < 0:
+                    quality = 'no_contact'
+                elif accuracy == 0 or not values or values[0] <= 0:
+                    quality = 'unreliable'
+                else:
+                    quality = 'reported'
+            yield dict(heart_rate_quality=quality, run=e['run'], boottime_ns=ns, type=sensor, accuracy=accuracy, values=values,
                        captured_sample=frame, media_ms=media_ms, status=status)
 
 
