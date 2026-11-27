@@ -51,6 +51,8 @@ KoeMemo 由 Kotlin 原生手表端和安卓手机端组成。手表负责熄屏�
 
 RNNoise 的 GPU 对照实验使用独立的文件探针，构建与复现步骤见 [探针说明](tools/probes/rnnoise-gpu/README.md)。
 
+从全天腕录、断点同步到可回听文字稿的优先级和验收条件，见[产品重整方案](docs/product-roadmap.md)。
+
 ## 构建
 
 需要 **完整 JDK 17 或 21**、Android SDK Platform 35、Build Tools 35.0.0，以及用于安装的 Platform Tools。Android Studio 可选；不需要 Rust、NDK 或三星专用 SDK。
