@@ -72,11 +72,13 @@ class SpeakerActivity : AppCompatActivity() {
                 }
             }
             val model = method.directory(this).isDirectory
+            val pending = clips.firstOrNull { SpeakerStore.turns(data, it) == null }?.let { store.partial(data, it) }
             ui {
                 status.text = listOf(note, when {
                     clips.isEmpty() -> "等待音频同步"
                     done == clips.size && examples.isEmpty() -> "未能区分出发言人"
-                    done > 0 -> "已分析 ${100L * done / clips.size}% · 区分出 ${examples.size} 位发言人"
+                    done > 0 || pending != null -> "已保存 ${done}/${clips.size} 段 · 区分出 ${examples.size} 位发言人" +
+                        (pending?.let { " · 当前段已保存 ${it.getInt("endMs") / 1000} 秒" } ?: "")
                     model && method == SpeakerMethod.FUN -> "使用 FSMN-VAD 和 CAM++ 分析。短对话可能归为同一人，可回听核对。"
                     model -> "仅分析本次录音，结果保存在手机。退出此页会暂停，已完成的音频可以接着用。"
                     method == SpeakerMethod.FUN -> "请选择包含 FSMN-VAD 和 CAM++ 两个模型文件的文件夹。"
@@ -85,7 +87,7 @@ class SpeakerActivity : AppCompatActivity() {
                 action.text = when {
                     done == clips.size && done > 0 -> "已完成分析"
                     !model -> "导入发言人模型"
-                    done > 0 -> "继续区分发言人"
+                    done > 0 || pending != null -> "继续区分发言人"
                     else -> "区分本次发言人"
                 }
                 action.isEnabled = clips.isNotEmpty() && done < clips.size
@@ -106,20 +108,41 @@ class SpeakerActivity : AppCompatActivity() {
                 val data = store.analysis()
                 val clips = AudioSession.load(directory).clips
                 var firstError: String? = null
+                var saved = clips.count { SpeakerStore.turns(data, it) != null }
                 method.open(this).use { engine ->
                     for ((i, clip) in clips.withIndex()) {
                         if (stop.get()) throw CancellationException()
                         if (SpeakerStore.turns(data, clip) != null) continue
-                        ui { status.text = "正在区分发言人 · ${100L * i / clips.size}%" }
-                        val profiles = SpeakerStore.profiles(data)
-                        val turns = try { engine.analyze(clip, profiles, stop::get) }
+                        val partial = store.partial(data, clip)
+                        val profiles = SpeakerStore.profiles(partial ?: data)
+                        val turns = partial?.let(SpeakerStore::decodeTurns).orEmpty().toMutableList()
+                        val resumeMs = partial?.getInt("endMs") ?: 0
+                        val label = "第 ${i + 1}/${clips.size} 段 · 已保存 $saved 段"
+                        fun show(step: String) {
+                            val message = listOfNotNull(firstError, label, step).joinToString("\n")
+                            ui { if (!stop.get()) status.text = message }
+                        }
+                        show("读取原音 · 已保存 ${resumeMs / 1000} 秒")
+                        try {
+                            readSpeakerAudio(clip, stop::get) { pcm, offset ->
+                                if (offset >= resumeMs) {
+                                    val endMs = offset + pcm.size / 16
+                                    show("正在区分 ${offset / 1000}–${(endMs + 999) / 1000} 秒")
+                                    turns += engine.window(pcm, offset, profiles, stop::get)
+                                    store.checkpoint(data, clip, endMs, turns, profiles)
+                                    show("当前段已保存 ${endMs / 1000} 秒")
+                                }
+                            }
+                        }
                             catch (e: CancellationException) { throw e }
+                            catch (e: InterruptedException) { throw e }
                             catch (e: Exception) {
-                                if (firstError == null) firstError = e.localizedMessage ?: "原音无法分析"
+                                if (firstError == null) firstError = "第 ${i + 1} 段失败 · ${e.localizedMessage ?: "原音无法分析"}"
                                 continue
                             }
                         if (stop.get()) throw CancellationException()
                         store.save(data, clip, turns, profiles)
+                        saved++
                     }
                 }
                 firstError?.let { "部分原音尚未分析 · $it" }.orEmpty()

@@ -31,7 +31,10 @@ internal enum class SpeakerMethod(val modelId: String, val weights: Map<String, 
 }
 
 internal interface SpeakerEngine : AutoCloseable {
-    fun analyze(clip: SessionClip, profiles: SpeakerProfiles, cancelled: () -> Boolean): List<SpeakerTurn>
+    fun window(pcm: FloatArray, offset: Int, profiles: SpeakerProfiles, cancelled: () -> Boolean): List<SpeakerTurn>
+    fun analyze(clip: SessionClip, profiles: SpeakerProfiles, cancelled: () -> Boolean): List<SpeakerTurn> = buildList {
+        readSpeakerAudio(clip, cancelled) { pcm, offset -> addAll(window(pcm, offset, profiles, cancelled)) }
+    }
 }
 
 internal class SpeakerAnalysis(dir: File) : SpeakerEngine {
@@ -42,33 +45,29 @@ internal class SpeakerAnalysis(dir: File) : SpeakerEngine {
     private val extractor = try { SpeakerEmbeddingExtractor(config = embedding) } catch (t: Throwable) { diarizer.release(); throw t }
     private val rate = diarizer.sampleRate().also { check(it == 16000) }
 
-    override fun analyze(clip: SessionClip, profiles: SpeakerProfiles, cancelled: () -> Boolean): List<SpeakerTurn> {
-        val turns = mutableListOf<SpeakerTurn>()
-        readSpeakerAudio(clip, cancelled) { pcm, processedMs ->
-            val used = pcm.size
-            val segments = diarizer.process(pcm)
-            if (cancelled()) throw CancellationException()
-            val local = segments.mapNotNull {
-                val start = (it.start * 1000).roundToInt().coerceIn(0, used / 16)
-                val end = (it.end * 1000).roundToInt().coerceIn(start, used / 16)
-                if (end > start) SpeakerTurn(start, end, it.speaker) else null
-            }.sortedBy { it.start }
-            val vectors = mutableMapOf<Int, FloatArray>()
-            for (id in local.map { it.id }.distinct()) {
-                val clean = longestSolo(local, id) ?: continue
-                val start = clean.first * 16
-                val end = minOf(clean.second * 16, start + 8 * rate)
-                val stream = extractor.createStream()
-                try {
-                    stream.acceptWaveform(pcm.copyOfRange(start, end), rate)
-                    stream.inputFinished()
-                    if (extractor.isReady(stream)) vectors[id] = extractor.compute(stream)
-                } finally { stream.release() }
-            }
-            val ids = profiles.assign(vectors)
-            local.forEach { turns.add(SpeakerTurn(processedMs + it.start, processedMs + it.end, ids[it.id] ?: 0)) }
+    override fun window(pcm: FloatArray, offset: Int, profiles: SpeakerProfiles, cancelled: () -> Boolean): List<SpeakerTurn> {
+        val used = pcm.size
+        val segments = diarizer.process(pcm)
+        if (cancelled()) throw CancellationException()
+        val local = segments.mapNotNull {
+            val start = (it.start * 1000).roundToInt().coerceIn(0, used / 16)
+            val end = (it.end * 1000).roundToInt().coerceIn(start, used / 16)
+            if (end > start) SpeakerTurn(start, end, it.speaker) else null
+        }.sortedBy { it.start }
+        val vectors = mutableMapOf<Int, FloatArray>()
+        for (id in local.map { it.id }.distinct()) {
+            val clean = longestSolo(local, id) ?: continue
+            val start = clean.first * 16
+            val end = minOf(clean.second * 16, start + 8 * rate)
+            val stream = extractor.createStream()
+            try {
+                stream.acceptWaveform(pcm.copyOfRange(start, end), rate)
+                stream.inputFinished()
+                if (extractor.isReady(stream)) vectors[id] = extractor.compute(stream)
+            } finally { stream.release() }
         }
-        return turns
+        val ids = profiles.assign(vectors)
+        return local.map { SpeakerTurn(offset + it.start, offset + it.end, ids[it.id] ?: 0) }
     }
     override fun close() { try { extractor.release() } finally { diarizer.release() } }
 }

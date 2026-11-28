@@ -43,7 +43,7 @@
 - 从 `sherpa-onnx-pyannote-segmentation-3-0.tar.bz2` 解压 `model.int8.onnx`。[分段模型](https://github.com/k2-fsa/sherpa-onnx/releases/tag/speaker-segmentation-models)
 - 下载 `3dspeaker_speech_eres2net_base_sv_zh-cn_3dspeaker_16k.onnx`。[声音特征模型](https://github.com/k2-fsa/sherpa-onnx/releases/tag/speaker-recongition-models)
 
-点「区分本次发言人」后，手机在本地分析已收到的原音。可暂停，返回此页后可从已保存的音频继续。分析和转写可以分别进行。点发言人旁的「回听」核对，点「命名」设置本次录音内的名字。返回文字稿即可看到标签。清空名字恢复匿名编号。
+点「区分本次发言人」后，手机在本地分析已收到的原音。界面显示当前文件序号、已保存段数和正在分析的秒数范围。每个最长 60 秒的窗口完成后保存，暂停或退出后可从已保存窗口继续。分析和转写可以分别进行。点发言人旁的「回听」核对，点「命名」设置本次录音内的名字。返回文字稿即可看到标签。清空名字恢复匿名编号。
 
 手机按最多 60 秒一批分析 16 kHz 单声道音频，在同一会话内匹配编号。Fun-ASR 使用聚类后的声音特征中心，pyannote 路线使用单人发言区间的声音特征。噪声、轮次过短、重叠或声学环境变化可能使一个人被拆为多人，或不同人被归到同组。文字按约 15 秒一窗显示，多人同窗会列出所有发言人。词级归属和真实腕录上的分人错误率仍待验证。
 
