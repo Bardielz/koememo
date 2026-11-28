@@ -30,7 +30,7 @@ class OpusWriterTest {
         val dir = Files.createTempDirectory("ogg-pool").toFile()
         try {
             fun render(prefix: String, reuse: Boolean): List<ByteArray> {
-                OpusSegmentWriter(dir, prefix, 1_200_000L, reuse) { _, _, _, _, _, _, _ -> }.use { writer ->
+                OpusSegmentWriter(dir, prefix, 1_200_000L, reuse) {}.use { writer ->
                     writer.configureHeader(header())
                     val lengths = intArrayOf(3, 254, 255, 256, 510, 900)
                     val input = ByteArray(1024)
@@ -67,7 +67,12 @@ class OpusWriterTest {
         try {
             val hashes = mutableMapOf<String, String>()
             val head = header().apply { this[10] = 0x38; this[11] = 1 }
-            OpusSegmentWriter(dir, "run", 1_000_000, reuse) { name, _, _, _, hash, _, _ -> hashes[name] = hash }.use { writer ->
+            OpusSegmentWriter(dir, "run", 1_000_000, reuse) { segment ->
+                val start = if (hashes.isEmpty()) 6500L else segment.firstPtsUs
+                assertEquals(start, segment.playbackStartUs)
+                assertEquals(segment.lastPtsUs + 20000L, segment.endPtsUs)
+                hashes[segment.name] = segment.sha256
+            }.use { writer ->
                 writer.configureHeader(head)
                 repeat(151) { i ->
                     writer.write(byteArrayOf(0xf8.toByte(), 0xff.toByte(), 0xfe.toByte()), i * 20000L)

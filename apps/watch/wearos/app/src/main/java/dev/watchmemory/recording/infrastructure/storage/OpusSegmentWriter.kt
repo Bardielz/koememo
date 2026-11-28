@@ -17,7 +17,7 @@ class OpusSegmentWriter @JvmOverloads constructor(
     private val prefix: String,
     private val segmentUs: Long = 300_000_000,
     private val reuseBuffers: Boolean = false,
-    private val onClosed: (String, Long, Long, Long, String, Long, Long) -> Unit
+    private val onClosed: (ClosedSegment) -> Unit
 ) : RecordingWriter {
     private class Packet(var data: ByteArray, var length: Int, var samples: Int) {
         var inHistory = false
@@ -139,7 +139,8 @@ class OpusSegmentWriter @JvmOverloads constructor(
         try { flushPage(true); buffered!!.flush(); closing.fd.sync() }
         finally { stream = null; buffered = null; closing.close() }
         val hash = digest.digest().joinToString("") { "%02x".format(it.toInt() and 255) }
-        onClosed(checkNotNull(file).name, firstUs, lastUs, bytesWritten, hash, playbackStartUs, lastUs + lastPacketSamples * 1_000_000L / 48000)
+        onClosed(ClosedSegment(checkNotNull(file).name, firstUs, lastUs, bytesWritten, hash,
+            playbackStartUs, lastUs + lastPacketSamples * 1_000_000L / 48000))
     }
     override fun close() { closeSegment() }
 }

@@ -14,6 +14,7 @@ data class RecordingConfiguration(
 ) {
     init {
         require(!quietGate || experimentsEnabled)
+        require(!sensorTimeline || experimentsEnabled)
         require(sampleRate in ExperimentPolicy.sampleRates)
         require(bitrate in encoding.rates)
         require(experimentsEnabled || (source == RecordingSource.MIC && sampleRate == 16000 && encoding == RecordingEncoding.AAC && bitrate == 48000))

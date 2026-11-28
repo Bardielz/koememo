@@ -7,6 +7,9 @@ import android.widget.*
 import java.io.File
 import java.util.concurrent.Executors
 import java.util.concurrent.CancellationException
+import dev.koememo.sync.RunTimeline
+import dev.koememo.sync.sessionTimeline
+import java.text.DateFormat
 
 class TranscriptionActivity : Activity() {
     private lateinit var file: File
@@ -16,6 +19,7 @@ class TranscriptionActivity : Activity() {
     private lateinit var player: RecordingPlayer
     @Volatile private var cancelled = false
     private var busy = false
+    private var timeline: RunTimeline? = null
 
     override fun onCreate(state: Bundle?) {
         super.onCreate(state)
@@ -41,7 +45,10 @@ class TranscriptionActivity : Activity() {
         layout.addView(ScrollView(this).apply { addView(rows) })
         setContentView(layout)
         ready()
-        if (AsrModel.directory(this).isDirectory) worker.execute {
+        worker.execute {
+            val run = runCatching { sessionTimeline(file).firstOrNull { r -> r.spans.any { it.file == file.name } } }.getOrNull()
+            ui { timeline = run }
+            if (!AsrModel.directory(this).isDirectory) return@execute
             try {
                 val transcript = LocalTranscription(applicationContext, file)
                 ui { display(transcript); if (transcript.data.optBoolean("complete")) action.isEnabled = false }
@@ -68,13 +75,18 @@ class TranscriptionActivity : Activity() {
     }
     private fun display(transcript: LocalTranscription) {
         val windows = transcript.data.getJSONArray("windows")
+        val matchingRun = timeline?.takeIf { run ->
+            run.spans.any { it.file == file.name && it.hash == transcript.data.optString("sha256") }
+        }
         rows.removeAllViews()
         for (i in 0 until windows.length()) {
             val w = windows.getJSONObject(i)
             val start = w.getInt("start_ms")
             val text = w.getString("text")
             if (text.isNotBlank()) rows.addView(Button(this).apply {
-                this.text = "%d:%02d　%s".format(start / 60000, start / 1000 % 60, text)
+                val recordedAt = matchingRun?.timeAt(file.name, start.toLong())
+                val time = recordedAt?.let { DateFormat.getTimeInstance(DateFormat.MEDIUM).format(java.util.Date(it)) }
+                this.text = listOfNotNull(time, "%d:%02d".format(start / 60000, start / 1000 % 60), text).joinToString("　")
                 setOnClickListener { player.play(file, start) }
             })
         }

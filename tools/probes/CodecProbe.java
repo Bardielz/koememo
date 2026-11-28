@@ -22,8 +22,8 @@ public class CodecProbe {
                     String name = encoding.name() + "-" + rate + "-" + bitrate;
                     File directory = new File(root, name); directory.mkdirs();
                     RecordingWriter writer = encoding == RecordingEncoding.OPUS
-                        ? new OpusSegmentWriter(directory, "probe", 1_000_000L, (a,b,c,d,e) -> Unit.INSTANCE)
-                        : new SegmentWriter(directory, "probe", 1_000_000L, rate, (a,b,c,d,e) -> Unit.INSTANCE);
+                        ? new OpusSegmentWriter(directory, "probe", 1_000_000L, segment -> Unit.INSTANCE)
+                        : new SegmentWriter(directory, "probe", 1_000_000L, rate, segment -> Unit.INSTANCE);
                     MediaFormat format = MediaFormat.createAudioFormat(AudioFormats.mime(encoding), rate, 1);
                     format.setInteger(MediaFormat.KEY_BIT_RATE, bitrate);
                     format.setInteger(MediaFormat.KEY_MAX_INPUT_SIZE, rate * 2 * 128 / 1000);

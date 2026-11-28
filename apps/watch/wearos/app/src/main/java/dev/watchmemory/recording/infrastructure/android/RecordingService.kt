@@ -104,11 +104,11 @@ open class RecordingService : Service(), CaptureObserver {
             val config = graph.settings.configuration()
             val heartGranted = config.sensorTimeline && checkSelfPermission(RecordingSensors.heartPermission) == PackageManager.PERMISSION_GRANTED
             val micType = ServiceInfo.FOREGROUND_SERVICE_TYPE_MICROPHONE
-            var enableHeart = heartGranted
+            var heartUnavailable = if (heartGranted) null else "permission_unavailable"
             if (heartGranted && Build.VERSION.SDK_INT >= 34) {
                 try { startForeground(1, notification("正在启动录音"), micType or ServiceInfo.FOREGROUND_SERVICE_TYPE_HEALTH) }
                 catch (_: SecurityException) {
-                    enableHeart = false
+                    heartUnavailable = "health_service_denied"
                     startForeground(1, notification("正在启动录音"), micType)
                 }
             } else startForeground(1, notification("正在启动录音"), micType)
@@ -129,7 +129,7 @@ open class RecordingService : Service(), CaptureObserver {
             if (config.sensorTimeline) {
                 sensorLog = RecordingSensors(this) { event, fields ->
                     graph.repository.append(plan.sessionId, event, fields + ("run" to plan.runId))
-                }.also { it.start(enableHeart) }
+                }.also { it.start(heartUnavailable) }
             }
             wakePlan = plan
             persistWakeEvents = diagnosticEnabled
@@ -215,8 +215,15 @@ open class RecordingService : Service(), CaptureObserver {
         stopReason = reason; runtime.status = "正在保存…"; stopping = true
     }
     private fun complete(error: String?) {
-        sensorLog?.close(); sensorLog = null
         handler.removeCallbacks(monitor)
+        val sensors = sensorLog
+        if (sensors == null) finishRecording(error)
+        else sensors.drain {
+            sensorLog = null
+            finishRecording(error)
+        }
+    }
+    private fun finishRecording(error: String?) {
         var finalStatus = error ?: stopReason ?: "录音已停止"
         try {
             sessions.complete(finalStatus, mapOf("duration_ms" to (if (runtime.busy) SystemClock.elapsedRealtime() - runtime.startedAt else 0),

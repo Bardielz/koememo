@@ -1,6 +1,7 @@
 package dev.koememo.sync
 
 import org.json.JSONObject
+import java.io.File
 import kotlin.math.abs
 import kotlin.math.roundToLong
 
@@ -27,9 +28,9 @@ object TimelineJournal {
 }
 
 data class TimelineMark(val wallMs: Long, val bootNs: Long)
-data class PlaybackSpan(val file: String, val startUs: Long, val endUs: Long)
+data class PlaybackSpan(val file: String, val startUs: Long, val endUs: Long, val hash: String)
 sealed class MarkPosition {
-    data class Audio(val file: String, val offsetMs: Int) : MarkPosition()
+    data class Audio(val file: String, val offsetMs: Int, val hash: String) : MarkPosition()
     object Omitted : MarkPosition()
     object Unknown : MarkPosition()
 }
@@ -76,7 +77,7 @@ class RunTimeline(val rate: Int, private val elapsedMs: Long, private val wallMs
         }
         val mediaUs = (frame - omitted) * 1_000_000L / rate
         val span = spans.lastOrNull { mediaUs >= it.startUs && mediaUs < it.endUs } ?: return MarkPosition.Unknown
-        return MarkPosition.Audio(span.file, ((mediaUs - span.startUs) / 1000).toInt())
+        return MarkPosition.Audio(span.file, ((mediaUs - span.startUs) / 1000).toInt(), span.hash)
     }
 
     /** Approximate local wall clock for a transcript window, derived from this run's clock pair. */
@@ -102,7 +103,10 @@ fun readTimeline(lines: Sequence<String>): List<RunTimeline> {
         val e = JSONObject(line)
         when (e.getString("event")) {
             "run_started" -> {
-                val run = RunTimeline(e.getInt("sample_rate"), e.getLong("elapsed_ms"), e.getLong("wall_ms"))
+                active = null
+                val rate = e.optInt("sample_rate")
+                if (rate !in 1..192000 || !e.has("elapsed_ms") || !e.has("wall_ms") || !e.has("run")) continue
+                val run = RunTimeline(rate, e.getLong("elapsed_ms"), e.getLong("wall_ms"))
                 runs[e.getString("run")] = run
                 active = run
             }
@@ -118,9 +122,14 @@ fun readTimeline(lines: Sequence<String>): List<RunTimeline> {
             "segment_closed" -> if (e.has("playback_start_us") && e.has("end_pts_us")) {
                 val name = e.getString("file")
                 require(name.matches(Regex("[A-Za-z0-9-]{1,120}\\.(aac|ogg)")))
-                runs[e.getString("run")]?.spans?.add(PlaybackSpan(name, e.getLong("playback_start_us"), e.getLong("end_pts_us")))
+                runs[e.getString("run")]?.spans?.add(PlaybackSpan(name, e.getLong("playback_start_us"), e.getLong("end_pts_us"), e.getString("sha256")))
             }
         }
     }
     return runs.values.toList()
+}
+
+fun sessionTimeline(audio: File): List<RunTimeline> {
+    val journal = File(audio.parentFile, TimelineJournal.FILE)
+    return if (journal.isFile) journal.useLines { readTimeline(it) } else emptyList()
 }

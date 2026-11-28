@@ -14,12 +14,17 @@ class DiagnosticSettingsTest {
         val defaults = settings.configuration()
         assertFalse(settings.diagnosticsEnabled)
         assertFalse(defaults.quietGate)
+        assertFalse(defaults.sensorTimeline)
+        assertThrows(IllegalStateException::class.java) { settings.setSensorTimeline(true) }
         assertThrows(IllegalStateException::class.java) { settings.setQuietGate(true) }
         assertThrows(IllegalStateException::class.java) { settings.setDiagnostics(true) }
         settings.setExperiments(true); settings.setDiagnostics(true); settings.setQuietGate(true)
+        settings.setSensorTimeline(true)
+        assertTrue(settings.configuration().sensorTimeline)
         assertTrue(settings.configuration().quietGate)
         assertTrue(settings.diagnosticsEnabled)
         state.busy = true
+        assertThrows(IllegalStateException::class.java) { settings.setSensorTimeline(false) }
         assertThrows(IllegalStateException::class.java) { settings.setDiagnostics(false) }
         assertThrows(IllegalStateException::class.java) { settings.setQuietGate(false) }
         state.busy = false; settings.setExperiments(false)

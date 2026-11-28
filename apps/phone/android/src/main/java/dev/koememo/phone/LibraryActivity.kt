@@ -5,6 +5,10 @@ import android.os.Bundle
 import android.widget.*
 import android.content.Intent
 import android.content.SharedPreferences
+import dev.koememo.sync.MarkPosition
+import dev.koememo.sync.sessionTimeline
+import dev.koememo.sync.sha256
+import java.text.DateFormat
 import java.io.*
 
 class LibraryActivity : Activity() {
@@ -88,11 +92,13 @@ class LibraryActivity : Activity() {
         list.adapter = ArrayAdapter(this, android.R.layout.simple_list_item_1, files.map { it.parentFile!!.name + "/" + it.name })
         list.setOnItemClickListener { _, _, index, _ ->
             val file = files[index]
-            android.app.AlertDialog.Builder(this).setTitle(file.name).setItems(arrayOf("播放", "导出", "本地转写")) { _, choice ->
+            android.app.AlertDialog.Builder(this).setTitle(file.name).setItems(arrayOf("播放", "导出", "本地转写", "本次录音的标记")) { _, choice ->
                 if (choice == 0) {
                     player.play(file)
                 } else if (choice == 2) {
                     startActivity(Intent(this, TranscriptionActivity::class.java).putExtra("path", file.path))
+                } else if (choice == 3) {
+                    showMarks(file)
                 } else {
                     exporting = file
                     startActivityForResult(android.content.Intent(android.content.Intent.ACTION_CREATE_DOCUMENT).apply {
@@ -103,6 +109,45 @@ class LibraryActivity : Activity() {
                 }
             }.show()
         }
+    }
+    private fun showMarks(file: File) {
+        Thread {
+            val result = runCatching { sessionTimeline(file) }
+            runOnUiThread {
+                if (isDestroyed || isFinishing) return@runOnUiThread
+                val runs = result.getOrElse {
+                    status.text = "无法读取本次录音的时间轴"
+                    return@runOnUiThread
+                }
+                val marks = runs.flatMap { run -> run.marks.map { mark -> mark to run.locate(mark) } }
+                if (marks.isEmpty()) {
+                    status.text = if (runs.isEmpty()) "这次录音尚无可用时间轴" else "本次录音没有标记"
+                    return@runOnUiThread
+                }
+                val clock = DateFormat.getDateTimeInstance(DateFormat.SHORT, DateFormat.MEDIUM)
+                val items = marks.map { (mark, position) ->
+                    val where = when (position) {
+                        is MarkPosition.Audio -> "回听"
+                        MarkPosition.Omitted -> "此处静音已省略"
+                        MarkPosition.Unknown -> "原音位置未知"
+                    }
+                    clock.format(java.util.Date(mark.wallMs)) + "　" + where
+                }
+                android.app.AlertDialog.Builder(this).setTitle("本次录音的标记")
+                    .setItems(items.toTypedArray()) { _, i ->
+                        val position = marks[i].second as? MarkPosition.Audio ?: return@setItems
+                        val audio = File(file.parentFile, position.file)
+                        Thread {
+                            val verified = runCatching { audio.sha256() == position.hash }.getOrDefault(false)
+                            runOnUiThread play@{
+                                if (isDestroyed || isFinishing) return@play
+                                if (verified) player.play(audio, position.offsetMs)
+                                else status.text = "对应原音缺失或校验失败，请重新同步"
+                            }
+                        }.start()
+                    }.show()
+            }
+        }.start()
     }
     override fun onSaveInstanceState(state: Bundle) {
         super.onSaveInstanceState(state)

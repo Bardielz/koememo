@@ -32,10 +32,15 @@ class AudioTransferSession(private val context: Context, private val diagnostics
             output.writeUTF(id)
             val journal = File(segments.first().second.parentFile, "events.jsonl")
             journal.useLines { lines ->
-                val projected = lines.mapNotNull { line ->
+                val iterator = lines.iterator()
+                val projected = iterator.asSequence().mapNotNull { line ->
                     // Do not parse large diagnostic/sensor payloads just to discard them.
                     if (!timelineEvent.containsMatchIn(line)) return@mapNotNull null
-                    val event = JSONObject(line)
+                    val event = try { JSONObject(line) } catch (e: org.json.JSONException) {
+                        // A writer can still be appending the last line during a live sync.
+                        if (iterator.hasNext()) throw e
+                        return@mapNotNull null
+                    }
                     if (event.optString("event") == "segment_closed" &&
                         catalog[event.optString("file")] != event.optString("sha256")) return@mapNotNull null
                     TimelineJournal.project(event)?.toString()
