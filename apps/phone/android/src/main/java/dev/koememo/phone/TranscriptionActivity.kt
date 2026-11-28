@@ -14,6 +14,7 @@ import android.view.ViewGroup
 import android.view.accessibility.AccessibilityManager
 import android.widget.*
 import dev.koememo.sync.sha256
+import org.json.JSONObject
 import java.io.File
 import java.text.DateFormat
 import java.util.Date
@@ -27,6 +28,9 @@ class TranscriptionActivity : Activity() {
     private lateinit var player: RecordingPlayer
     private val io = Executors.newSingleThreadExecutor()
     private var catalog: AudioSession? = null // Owned by io.
+    private lateinit var speakers: SpeakerStore
+    private lateinit var speakerData: JSONObject
+    private lateinit var speakerNames: JSONObject
     private var ready = false
     private var importing = false
     private val syncState by lazy { getSharedPreferences("sync_state", MODE_PRIVATE) }
@@ -53,8 +57,10 @@ class TranscriptionActivity : Activity() {
         super.onCreate(state)
         target = File(intent.getStringExtra("path").orEmpty()).canonicalFile
         val directory = if (target.isDirectory) target else target.parentFile
-        if (directory == null || !directory.toPath().startsWith(File(filesDir, "audio").canonicalFile.toPath()) ||
+        val root = File(filesDir, "audio").canonicalFile
+        if (directory == null || directory == root || !directory.toPath().startsWith(root.toPath()) ||
             !(target.isDirectory || target.isAudioSegment())) { finish(); return }
+        speakers = SpeakerStore(this, directory)
         val layout = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; isFocusableInTouchMode = true }
         layout.setOnApplyWindowInsetsListener { view, insets ->
             val safe = insets.getInsets(android.view.WindowInsets.Type.systemBars() or android.view.WindowInsets.Type.ime())
@@ -62,6 +68,10 @@ class TranscriptionActivity : Activity() {
         }
         layout.addView(navigationBar(if (target.isDirectory) "整场文字稿" else "本段文字稿", back = true).apply {
             subtitle = if (target.isDirectory) sessionTitle(target) else target.name
+            if (target.isDirectory) action("发言人", true) {
+                player.pauseForNavigation()
+                startActivity(Intent(this@TranscriptionActivity, SpeakerActivity::class.java).putExtra("directory", directory.path))
+            }
         })
         status = TextView(this)
         action = Button(this).apply { setOnClickListener { toggle() } }
@@ -116,6 +126,8 @@ class TranscriptionActivity : Activity() {
             try {
                 val directory = if (target.isDirectory) target else target.parentFile!!
                 val session = if (changedFile == null) {
+                    speakerData = speakers.analysis()
+                    speakerNames = speakers.names()
                     AudioSession.load(directory, target.takeUnless { it == directory }).also { catalog = it }
                 } else catalog ?: return@execute
                 val changedHash = session.clips.firstOrNull { it.file == changedFile }?.hash
@@ -142,6 +154,7 @@ class TranscriptionActivity : Activity() {
         val edits = checkpoint.corrections()
         val windows = data.getJSONArray("windows")
         val clock = DateFormat.getTimeInstance(DateFormat.MEDIUM)
+        val turns = SpeakerStore.turns(speakerData, clip)
         val lines = buildList {
             for (i in 0 until windows.length()) {
                 val row = windows.getJSONObject(i)
@@ -151,11 +164,10 @@ class TranscriptionActivity : Activity() {
                 if (text.isBlank() && edit == null) continue
                 val span = clip.span?.takeUnless { clip.hashMismatch }
                 val wall = span?.let { clip.run?.timeAt(it.file, start.toLong()) }
-                val prefix = when {
-                    wall != null -> clock.format(Date(wall)) + "\n"
-                    !target.isDirectory -> duration(start / 1000L) + "\n"
-                    else -> ""
-                }
+                val time = wall?.let { clock.format(Date(it)) } ?: duration(start / 1000L).takeUnless { target.isDirectory }
+                val speaker = turns?.let { SpeakerStore.label(it, start, row.optInt("end_ms", start + 15000), speakerNames) }
+                val header = listOfNotNull(time, speaker).joinToString("　")
+                val prefix = if (header.isEmpty()) "" else "$header\n"
                 val context = span?.contextAt(start)?.description()?.let { "\n$it" }.orEmpty()
                 add(Line(clip, start, text, edit, prefix, context))
             }

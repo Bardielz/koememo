@@ -60,7 +60,7 @@ class LibraryActivity : Activity() {
         super.onCreate(state)
         intent.getStringExtra("segments")?.let {
             val dir = File(it).canonicalFile
-            if (!dir.toPath().startsWith(root.canonicalFile.toPath()) || !dir.isDirectory) { finish(); return }
+            if (dir == root.canonicalFile || !dir.toPath().startsWith(root.canonicalFile.toPath()) || !dir.isDirectory) { finish(); return }
             directory = dir
         }
         exporting = state?.getString("exportFile")?.let(::File)

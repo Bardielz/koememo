@@ -11,12 +11,12 @@ import java.util.concurrent.CancellationException
 // Readers and writers share the lock because AtomicFile.openRead may recover an interrupted write.
 private val transcriptFiles = Any()
 
-private fun readJson(file: AtomicFile, initial: () -> JSONObject): JSONObject = synchronized(transcriptFiles) {
+internal fun readJson(file: AtomicFile, initial: () -> JSONObject): JSONObject = synchronized(transcriptFiles) {
     try { file.openRead().bufferedReader().use { JSONObject(it.readText()) } }
     catch (_: java.io.FileNotFoundException) { initial() }
 }
 
-private fun writeJson(file: AtomicFile, json: JSONObject) = synchronized(transcriptFiles) {
+internal fun writeJson(file: AtomicFile, json: JSONObject) = synchronized(transcriptFiles) {
     val directory = requireNotNull(file.baseFile.parentFile)
     check(directory.isDirectory || directory.mkdirs()) { "无法创建文字稿目录" }
     val out = file.startWrite()
