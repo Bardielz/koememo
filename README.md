@@ -175,3 +175,5 @@ docs/               # 架构与变更记录
 ## 开发工作流
 
 所有后续特性从最新 `origin/master` 创建 `feature/<name>` 分支；修复使用 `fix/<name>`，维护使用 `chore/<name>`。通过 Git 提交、推送分支和 PR 合并到 `master`，不直接在主分支开发。具体步骤见 [贡献指南](CONTRIBUTING.md)。
+
+「录音时记录运动和心率」是默认关闭的手表实验项。在录音期间请求约 5 Hz 的加速度和设备报告的心率，停止时注销。用户允许身体传感器权限且系统提供心率读数时才会有 BPM。事件日志保存传感器采集的 BOOTTIME 纳秒时间、类型（1 为加速度 m/s²，21 为 BPM）、精度和数值，并周期性保存 AudioRecord 同一时基的帧位置。导出后运行 `python3 tools/audio/align-sensors.py /path/to/events.jsonl` 查看采集样本和片段所属录音的播放毫秒数。被省略的静音、无音频锚点等情况会明确标记。传感器日志仅随手表日志导出。

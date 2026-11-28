@@ -1,6 +1,10 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
     <uses-feature android:name="android.hardware.type.watch" />
     <uses-feature android:name="android.hardware.microphone" android:required="true" />
+    <uses-permission android:name="android.permission.BODY_SENSORS" android:maxSdkVersion="35" />
+    <uses-permission android:name="android.permission.health.READ_HEART_RATE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_HEALTH" />
+    <uses-feature android:name="android.hardware.sensor.heartrate" android:required="false" />
     <uses-permission android:name="android.permission.RECORD_AUDIO" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MICROPHONE" />
@@ -25,6 +29,6 @@
             <meta-data android:name="android.support.wearable.complications.SUPPORTED_TYPES" android:value="SHORT_TEXT,ICON" />
             <meta-data android:name="android.support.wearable.complications.UPDATE_PERIOD_SECONDS" android:value="0" />
         </service>
-        <service android:name=".RecordingService" android:exported="false" android:foregroundServiceType="microphone" android:stopWithTask="false" />
+        <service android:name=".RecordingService" android:exported="false" android:foregroundServiceType="microphone|health" android:stopWithTask="false" />
     </application>
 </manifest>
