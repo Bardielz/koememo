@@ -49,6 +49,28 @@
 
 一加 12 的 Fun-ASR 自测将两位说话人各自的五条不同录音交替拼接。十条录音的中点均标到了对应的同一人，静音样本没有生成发言区间。另一次将同一段双人英语录音原样循环三遍的测试产生了九个编号，重复音频可能造成过度分人。[公开语音样本](https://github.com/k2-fsa/sherpa-onnx/releases/tag/speaker-recongition-models)
 
+## 文字稿阅读
+
+整场文字稿按发言人和停顿分段。能定位到同一人且相邻的原文会连起来。换人、至少两秒的可观测停顿、时间不连续和较长的完整句会另起一段。多人同窗显示全部已知名字。尚无词级时间时，每条原文保留采集窗口的归属精度。点文字可回听对应窗口，长按可校订。导航短线表示段落位置，默认在左侧。可在文字稿右上菜单的「段落导航位置」切换左侧或右侧，选择对后续录音生效。可点击或拖动，滚动文字时当前刻度同步变化。搜索文字或发言人会更新可跳转的范围，读屏与方向键也可操作段落导航。
+
+交互参考了 [BBC Transcript Editor](https://github.com/bbc/react-transcript-editor) 的时间定位编辑、[WhisperX](https://github.com/m-bain/whisperX/blob/main/whisperx/diarize.py) 的时间区间归属，以及 [AndroidFastScroll](https://github.com/zhanghai/AndroidFastScroll) 的拖动定位。手机端直接使用已有 Android 列表和会话时间轴。
+
+## 文字稿实验
+
+打开手机「实验功能」总开关，在整场文字稿的右上菜单进入「文字稿实验」。模型按需从本地目录导入，校验 SHA-256，使用随 APK 安装的 ARM64 CPU 运行库。实验处理打开页面时已保存的文字和人工校订。要纳入之后的转写或校订，重新进入页面。
+
+| 用途 | 从指定版本下载的文件 |
+| --- | --- |
+| Meeting Agent 中文 | [根目录 Q4_0 GGUF 和同目录的 system_prompt.txt](https://huggingface.co/Luigi/gemma-4-E2B-meeting-agent-zh/tree/bc219ef2c009075285d58fa0296ad6c0588a6b3f)，均放入同一个导入目录 |
+| Gemma 4 E2B 原版 | [gemma-4-E2B_q4_0-it.gguf](https://huggingface.co/google/gemma-4-E2B-it-qat-q4_0-gguf/tree/675cff42a74c774d6cb76f76d8eacb49b48c9b93) |
+| EmbeddingGemma 1 文字编码器 | [embeddinggemma-300M-Q8_0.gguf](https://huggingface.co/ggml-org/embeddinggemma-300M-GGUF/tree/0f741b5a6585bd53aeb15cd1372c56f2a0f65e12) |
+| EmbeddingGemma 2 文字编码器 | [embeddinggemma-2-Q8_0.gguf](https://huggingface.co/ggml-org/embeddinggemma-2-GGUF/tree/6ea3e3a309d12a4779cfda98b8c19800d2d5da71) |
+
+**比较两种纪要。** 选择同一文件内的一组文字，手机依次加载两种模型，用相同的原话、时间、发言人提示和贪心解码提取要点。页面分别保存两份输出和耗时。引用时间与输入匹配时可点回原音。输出格式或引用无效时展示原始输出供核查。时间匹配只证明可以定位，内容和责任人仍需回听确认。
+
+**建立检索索引。** 两代模型分别对整场已保存的文字窗口计算 768 维归一化向量，存入手机私有 SQLite。每条记录携带会话、转写引擎、模型指纹、文件名及音频哈希、窗口起止时间和有效文字哈希。同一模型重建时只计算有变化的窗口，完整写入后才替换旧索引。当前阅读页仍提供即时文字搜索。后续语义检索须用同一模型对查询加 `task: search result | query: ` 前缀编码，在该模型文档向量上按余弦相似度排序。二代本次接入文字编码，原音向量需要另行接入音频投影器。
+
+
 ## 录音上下文
 
 同步后进入会话，点「运动与心率」，可以查看整个会话内可对齐的 15 秒窗口。点「按活动强度」会把手腕活动较强的窗口排在前面，点窗口回听。进度条拖动、会话标记和转写窗口都使用对应片段的播放偏移。每窗显示腕部活动强度、有效心率范围、有效与收到的心率样本数，以及缺少有效读数的秒格数。没有心率样本和有回调但全部无效分别显示。此功能需要两端支持上下文同步，且手表录音时已开启运动和心率实验。

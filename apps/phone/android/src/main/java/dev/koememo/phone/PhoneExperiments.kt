@@ -10,6 +10,7 @@ import dev.koememo.telemetry.showSyncHistory
 
 internal object PhoneExperiments {
     private fun prefs(context: Context) = context.getSharedPreferences("experiments", Context.MODE_PRIVATE)
+    fun enabled(context: Context) = prefs(context).getBoolean("enabled", false)
     fun collectMetrics(context: Context) = prefs(context).let {
         it.getBoolean("enabled", false) && it.getBoolean("sync_metrics", false)
     }
@@ -39,7 +40,7 @@ internal object PhoneExperiments {
             text = "查看同步统计"
             setOnClickListener { showSyncHistory(activity) }
         })
-        MaterialAlertDialogBuilder(activity).setTitle("实验功能").setMessage("设置从下次同步尝试生效。")
+        MaterialAlertDialogBuilder(activity).setTitle("实验功能")
             .setView(column).setPositiveButton("完成", null).show()
     }
 }

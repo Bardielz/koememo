@@ -13,6 +13,7 @@ import urllib.request
 LLAMA = "b12830"
 FUN = "5df2b86c73d19fb9afca24411e4a052d9113e619"
 ARCHIVE_SHA = "a780c3445e6dc1f18f41526b3acd83b3d5ef35fe931dd6bafec5fa6dba9ed066"
+GENERIC_SHA = "8a3cd52b1be95f9dca183ab2adfc0185df3e7dba17b92ab6bba16ee4601a68bf"
 FUN_FILES = {
     "runtime/llama.cpp/funasr-cli/funasr-cli.cpp": "13ec9247da7ca04668410d9dc9bd6eb539aeb23969a7d210f79b29bdc5849302",
     "runtime/llama.cpp/funasr-common/funasr_audio.h": "9a807d7a4c40f04d4c70f9f06553151fc921aa113b37e12cacc2350df79ef200",
@@ -79,6 +80,19 @@ def build(ndk, output, cache):
         subprocess.run([compiler, "-std=c++17", "-O2", "-shared", "-fPIC", "-static-libstdc++", "-I", work,
                         src / "fun_vad.cpp", "-L", lib, "-Wl,-z,max-page-size=16384", "-lggml-base",
                         "-lggml-cpu", "-o", lib / "libkoe_fun_vad.so"], check=True)
+        # Load these separately in the text worker. The Snapdragon libllama has hard OpenCL
+        # dependencies even when every model layer runs on CPU.
+        portable = artifact(cache, f"https://github.com/ggml-org/llama.cpp/releases/download/{LLAMA}/llama-{LLAMA}-bin-android-arm64.tar.gz", GENERIC_SHA)
+        cpu = work / "portable"
+        cpu.mkdir()
+        with tarfile.open(portable) as tar:
+            for name in ("libggml-base.so", "libggml.so", "libllama.so", "libggml-cpu-android_armv8.0_1.so"):
+                with tar.extractfile(f"llama-{LLAMA}/{name}") as inp, (cpu / name).open("wb") as out:
+                    shutil.copyfileobj(inp, out)
+                shutil.copyfile(cpu / name, lib / name.replace("lib", "libkoe_portable_", 1))
+        subprocess.run([compiler, "-std=c++17", "-O2", "-static-libstdc++", "-I", work, src / "transcript_models.cpp",
+                        "-L", cpu, "-Wl,-rpath,$ORIGIN", "-Wl,-z,max-page-size=16384", "-lllama", "-lggml", "-lggml-base",
+                        "-o", lib / "libkoe_transcript.so"], check=True)
         for file in lib.glob("*.so"):
             if not file.name.startswith("libggml-htp-"):
                 subprocess.run([tools / ("llvm-strip.exe" if os.name == "nt" else "llvm-strip"), "--strip-unneeded", file], check=True)

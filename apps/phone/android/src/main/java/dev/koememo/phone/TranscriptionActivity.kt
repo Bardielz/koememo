@@ -43,18 +43,21 @@ class TranscriptionActivity : AppCompatActivity() {
     private var visible = false
     private val pages = linkedMapOf<File, Page>()
     private val adapter = Lines()
-    private var shown = emptyList<Line>()
-    private var animate: Line? = null
+    private val readingSettings by lazy { getSharedPreferences("transcript-reading", MODE_PRIVATE) }
+    private lateinit var readingArea: LinearLayout
+    private lateinit var rail: ParagraphRail
+    private lateinit var list: ListView
+    private var shown = emptyList<List<TranscriptLine>>()
+    private var animate: TranscriptLine? = null
     private val changed: (File?) -> Unit = { file ->
         if (file == null) controls()
         else if ((target.isDirectory && file.parentFile == target) || target == file) load(file)
     }
 
-    private data class Line(val clip: SessionClip, val start: Int, val original: String, val edit: String?, val prefix: String, val context: String) {
-        val text get() = edit ?: original
-        fun label(body: String) = prefix + body + context
-    }
-    private data class Page(val complete: Boolean, val lines: List<Line>, val error: String? = null)
+    private data class Page(val complete: Boolean, val lines: List<TranscriptLine>, val error: String? = null)
+    private var touched: TranscriptLine? = null
+    private val clock = DateFormat.getTimeInstance(DateFormat.MEDIUM)
+    private fun time(line: TranscriptLine) = line.wall?.let { clock.format(Date(it)) } ?: sourceTime(line.start)
 
     override fun onCreate(state: Bundle?) {
         super.onCreate(state)
@@ -71,6 +74,12 @@ class TranscriptionActivity : AppCompatActivity() {
         }
         layout.addView(navigationBar(if (target.isDirectory) "整场文字稿" else "本段文字稿", back = true).apply {
             subtitle = if (target.isDirectory) sessionTitle(target) else target.name
+            action("段落导航位置") { chooseRailSide() }
+            if (target.isDirectory && PhoneExperiments.enabled(this@TranscriptionActivity)) action("文字稿实验") {
+                player.pauseForNavigation()
+                startActivity(Intent(this@TranscriptionActivity, TranscriptLabActivity::class.java)
+                    .putExtra("directory", directory.path).putExtra("engine", choice.key))
+            }
             if (target.isDirectory) action("发言人", true) {
                 player.pauseForNavigation()
                 startActivity(Intent(this@TranscriptionActivity, SpeakerActivity::class.java)
@@ -87,13 +96,37 @@ class TranscriptionActivity : AppCompatActivity() {
         layout.addView(action); layout.addView(status)
         player = RecordingPlayer(this)
         layout.addView(search)
-        val list = ListView(this).apply {
+        list = ListView(this).apply {
+            divider = null
             transcriptMode = AbsListView.TRANSCRIPT_MODE_NORMAL
             adapter = this@TranscriptionActivity.adapter
-            setOnItemClickListener { _, _, index, _ -> play(shown[index]) }
-            setOnItemLongClickListener { _, _, index, _ -> edit(shown[index]); true }
+            setOnItemClickListener { _, _, index, _ -> chooseWindow(shown[index], false) }
+            setOnItemLongClickListener { _, _, index, _ -> chooseWindow(shown[index], true); true }
+            setOnTouchListener { _, event ->
+                if (event.actionMasked == android.view.MotionEvent.ACTION_DOWN) {
+                    val position = pointToPosition(event.x.toInt(), event.y.toInt())
+                    val row = getChildAt(position - firstVisiblePosition) as? TextView
+                    val offset = row?.getOffsetForPosition(event.x - row.left, event.y - row.top)
+                    val text = row?.text as? android.text.Spanned
+                    touched = if (text != null && offset != null && offset in 0..text.length)
+                        text.getSpans(offset, offset, TranscriptLine::class.java).lastOrNull() else null
+                }
+                false
+            }
         }
-        layout.addView(list, LinearLayout.LayoutParams(-1, 0, 1f))
+        rail = ParagraphRail(this) { index -> list.setSelectionFromTop(index, 0) }.apply { visibility = View.GONE }
+        list.setOnScrollListener(object : AbsListView.OnScrollListener {
+            override fun onScrollStateChanged(view: AbsListView, state: Int) {}
+            override fun onScroll(view: AbsListView, first: Int, visible: Int, total: Int) {
+                val bottom = first > 0 && first + visible == total && !view.canScrollVertically(1)
+                rail.update(total, if (bottom) total - 1 else first)
+            }
+        })
+        readingArea = LinearLayout(this).apply {
+            addView(list, LinearLayout.LayoutParams(0, -1, 1f))
+        }
+        placeRail(readingSettings.getBoolean("rail_right", false))
+        layout.addView(readingArea, LinearLayout.LayoutParams(-1, 0, 1f))
         layout.addView(player)
         search.addTextChangedListener(object : TextWatcher {
             override fun beforeTextChanged(s: CharSequence?, start: Int, count: Int, after: Int) {}
@@ -129,6 +162,23 @@ class TranscriptionActivity : AppCompatActivity() {
         if (::search.isInitialized) state.putString("query", search.text.toString())
     }
 
+    private fun chooseRailSide() {
+        MaterialAlertDialogBuilder(this).setTitle("段落导航位置")
+            .setSingleChoiceItems(arrayOf("左侧", "右侧"), if (readingSettings.getBoolean("rail_right", false)) 1 else 0) { dialog, index ->
+                val right = index == 1
+                readingSettings.edit().putBoolean("rail_right", right).apply()
+                placeRail(right)
+                dialog.dismiss()
+            }.show()
+    }
+    private fun placeRail(right: Boolean) {
+        // These are physical sides, even when the document is displayed in a RTL locale.
+        if (rail.parent === readingArea) readingArea.removeView(rail)
+        val rtl = resources.configuration.layoutDirection == View.LAYOUT_DIRECTION_RTL
+        readingArea.addView(rail, if (right != rtl) 1 else 0,
+            LinearLayout.LayoutParams(rail.dp(48), ViewGroup.LayoutParams.MATCH_PARENT))
+    }
+
     private fun load(changedFile: File? = null) {
         val selectedModel = choice
         io.execute {
@@ -162,33 +212,25 @@ class TranscriptionActivity : AppCompatActivity() {
     private fun readPage(clip: SessionClip, model: AsrChoice): Page {
         val checkpoint = LocalTranscription(this, clip, model)
         val data = checkpoint.snapshot()
-        val edits = checkpoint.corrections()
-        val windows = data.getJSONArray("windows")
-        val clock = DateFormat.getTimeInstance(DateFormat.MEDIUM)
-        val turns = SpeakerStore.turns(speakerData, clip)
-        val lines = buildList {
-            for (i in 0 until windows.length()) {
-                val row = windows.getJSONObject(i)
-                val start = row.getInt("start_ms")
-                val text = row.getString("text")
-                val edit = if (edits.has(start.toString())) edits.getString(start.toString()) else null
-                if (text.isBlank() && edit == null) continue
-                val span = clip.span?.takeUnless { clip.hashMismatch }
-                val wall = span?.let { clip.run?.timeAt(it.file, start.toLong()) }
-                val time = wall?.let { clock.format(Date(it)) } ?: duration(start / 1000L).takeUnless { target.isDirectory }
-                val speaker = turns?.let { SpeakerStore.label(it, start, row.optInt("end_ms", start + 15000), speakerNames) }
-                val header = listOfNotNull(time, speaker).joinToString("　")
-                val prefix = if (header.isEmpty()) "" else "$header\n"
-                val context = span?.contextAt(start)?.description()?.let { "\n$it" }.orEmpty()
-                add(Line(clip, start, text, edit, prefix, context))
-            }
-        }
-        return Page(data.optBoolean("complete"), lines)
+        return Page(data.optBoolean("complete"), transcriptLines(this, clip, model, speakerData, speakerNames, data))
     }
     private fun filter() {
         val term = search.text.toString().trim()
-        shown = pages.values.flatMap { it.lines }.filter { it.text.contains(term, ignoreCase = true) }
+        shown = transcriptParagraphs(pages.values.flatMap { it.lines }).filter { paragraph ->
+            term.isEmpty() || paragraph.any { it.text.contains(term, true) || it.speaker.contains(term, true) }
+        }
         adapter.notifyDataSetChanged()
+        rail.update(shown.size, list.firstVisiblePosition)
+    }
+    private fun chooseWindow(lines: List<TranscriptLine>, editing: Boolean) {
+        fun open(line: TranscriptLine) = if (editing) edit(line) else play(line)
+        val hit = touched
+        touched = null
+        if (hit != null && hit in lines) { open(hit); return }
+        if (lines.size == 1) { open(lines.first()); return }
+        if (!editing) { open(lines.firstOrNull { search.text.isNotBlank() && it.text.contains(search.text, true) } ?: lines.first()); return }
+        MaterialAlertDialogBuilder(this).setTitle("选择要校订的原文")
+            .setItems(lines.map { time(it) + "　" + it.text }.toTypedArray()) { _, i -> edit(lines[i]) }.show()
     }
     private fun controls() {
         val active = TranscriptionJob.active(this)
@@ -271,7 +313,7 @@ class TranscriptionActivity : AppCompatActivity() {
             ui { importing = false; controls(); status.text = resultText }
         }
     }
-    private fun play(line: Line) {
+    private fun play(line: TranscriptLine) {
         io.execute {
             val valid = runCatching { !line.clip.hashMismatch && line.clip.file.sha256() == line.clip.hash }.getOrDefault(false)
             ui {
@@ -280,7 +322,7 @@ class TranscriptionActivity : AppCompatActivity() {
             }
         }
     }
-    private fun edit(line: Line) {
+    private fun edit(line: TranscriptLine) {
         val selectedModel = choice
         val input = EditText(this).apply { setText(line.text) }
         fun save(replacement: String?) {
@@ -305,17 +347,55 @@ class TranscriptionActivity : AppCompatActivity() {
                 setPadding(pad, pad, pad, pad)
             }
             (row.tag as? ValueAnimator)?.cancel()
-            val line = shown[position]
-            row.text = line.label(line.text)
-            row.contentDescription = row.text
-            if (line === animate && visible) {
+            val paragraph = shown[position]
+            val first = paragraph.first()
+            val heading = first.speaker + "　" + time(first)
+            val body = StringBuilder()
+            var lastStart = 0
+            val offsets = mutableListOf<Int>()
+            for (line in paragraph) {
+                body.append(paragraphSeparator(body.toString(), line.text))
+                lastStart = body.length
+                offsets.add(lastStart)
+                body.append(line.text)
+            }
+            val context = paragraph.map { it.context }.filter(String::isNotBlank).distinct().joinToString(" · ")
+            fun render(text: CharSequence) = android.text.SpannableStringBuilder(heading).apply {
+                setSpan(android.text.style.StyleSpan(android.graphics.Typeface.BOLD), 0, length, 0)
+                setSpan(android.text.style.RelativeSizeSpan(0.84f), 0, length, 0)
+                val accent = when (first.speakers.singleOrNull()?.rem(3)) {
+                    1 -> androidx.appcompat.R.attr.colorPrimary
+                    2 -> com.google.android.material.R.attr.colorTertiary
+                    0 -> com.google.android.material.R.attr.colorSecondary
+                    else -> com.google.android.material.R.attr.colorOnSurfaceVariant
+                }
+                setSpan(android.text.style.ForegroundColorSpan(com.google.android.material.color.MaterialColors.getColor(row, accent)),
+                    0, first.speaker.length, 0)
+                append("\n")
+                val base = length
+                append(text)
+                paragraph.forEachIndexed { i, line ->
+                    val from = offsets[i]
+                    val to = (from + line.text.length).coerceAtMost(text.length)
+                    if (from < to) setSpan(line, base + from, base + to, android.text.Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
+                }
+                if (context.isNotBlank()) {
+                    val at = length
+                    append("\n").append(context)
+                    setSpan(android.text.style.RelativeSizeSpan(0.8f), at, length, 0)
+                }
+            }
+            row.text = render(body)
+            row.contentDescription = row.text.toString()
+            val last = paragraph.last()
+            if (last === animate && visible) {
                 animate = null
                 if (ValueAnimator.areAnimatorsEnabled() && !getSystemService(AccessibilityManager::class.java).isTouchExplorationEnabled) {
-                    val breaks = BreakIterator.getCharacterInstance().apply { setText(line.text) }
+                    val breaks = BreakIterator.getCharacterInstance().apply { setText(last.text) }
                     val ends = generateSequence(breaks.first()) { breaks.next().takeUnless { it == BreakIterator.DONE } }.toList()
                     row.tag = ValueAnimator.ofInt(0, ends.lastIndex).apply {
                         duration = (ends.lastIndex * 40L).coerceAtMost(2400L)
-                        addUpdateListener { row.text = line.label(line.text.substring(0, ends[it.animatedValue as Int])) }
+                        addUpdateListener { row.text = render(body.substring(0, lastStart + ends[it.animatedValue as Int])) }
                         start()
                     }
                 }
