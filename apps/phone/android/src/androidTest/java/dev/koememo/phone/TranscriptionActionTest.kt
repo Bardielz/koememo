@@ -23,13 +23,15 @@ class TranscriptionActionTest {
         val audio = File(context.filesDir, "audio").apply { mkdirs() }
         val session = Files.createTempDirectory(audio.toPath(), "action-test-").toFile()
         File(session, "fixture.aac").writeBytes(byteArrayOf(1))
-        val picker = instrumentation.addMonitor(IntentFilter(Intent.ACTION_OPEN_DOCUMENT_TREE),
-            Instrumentation.ActivityResult(Activity.RESULT_CANCELED, null), true)
         var screen: Activity? = null
+        var monitor: Instrumentation.ActivityMonitor? = null
         try {
             val activity = instrumentation.startActivitySync(Intent(context, TranscriptionActivity::class.java)
                 .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_MULTIPLE_TASK).putExtra("path", session.path))
             screen = activity
+            val picker = instrumentation.addMonitor(IntentFilter(Intent.ACTION_OPEN_DOCUMENT_TREE),
+                Instrumentation.ActivityResult(Activity.RESULT_CANCELED, null), true)
+            monitor = picker
             val deadline = SystemClock.elapsedRealtime() + 8000
             var clicked = false
             while (!clicked && SystemClock.elapsedRealtime() < deadline) {
@@ -44,7 +46,7 @@ class TranscriptionActionTest {
             assertEquals("The action must launch the model picker", 1, picker.hits)
         } finally {
             screen?.let { instrumentation.runOnMainSync { it.finishAndRemoveTask() } }
-            instrumentation.removeMonitor(picker)
+            monitor?.let(instrumentation::removeMonitor)
             session.deleteRecursively()
         }
     }
