@@ -24,44 +24,40 @@ internal class FunSpeakerAnalysis(dir: File) : SpeakerEngine {
         model = File(dir, "3dspeaker_speech_campplus_sv_zh-cn_16k-common.onnx").path,
         numThreads = 2, provider = "cpu"))
 
-    override fun analyze(clip: SessionClip, profiles: SpeakerProfiles, cancelled: () -> Boolean): List<SpeakerTurn> {
-        val turns = mutableListOf<SpeakerTurn>()
-        readSpeakerAudio(clip, cancelled) { pcm, offset ->
-            val times = FunVad.detect(vad, pcm)
-            val chunks = mutableListOf<SpeakerTurn>()
-            val embeddings = mutableListOf<FloatArray>()
-            for (i in times.indices step 2) {
-                val start = times[i].coerceIn(0, pcm.size / 16)
-                val end = times[i + 1].coerceIn(start, pcm.size / 16)
-                // FunASR sv_chunk uses 1.5 s windows, a 0.75 s stride and a right-aligned tail.
-                var from = start
-                while (from < end) {
-                    if (cancelled()) throw CancellationException()
-                    val until = minOf(from + 1500, end)
-                    val left = maxOf(start, until - 1500)
-                    val speech = FloatArray(24000)
-                    pcm.copyInto(speech, 0, left * 16, until * 16)
-                    val stream = extractor.createStream()
-                    try {
-                        stream.acceptWaveform(speech, 16000)
-                        stream.inputFinished()
-                        check(extractor.isReady(stream)) { "CAM++ 未能提取声音特征" }
-                        val vector = extractor.compute(stream)
-                        check(vector.isNotEmpty() && vector.all { it.isFinite() } && vector.any { it != 0f }) {
-                            "CAM++ 返回了无效的声音特征"
-                        }
-                        embeddings.add(vector)
-                    } finally { stream.release() }
-                    chunks.add(SpeakerTurn(offset + left, offset + until, 0))
-                    if (until == end) break
-                    from += 750
-                }
+    override fun window(pcm: FloatArray, offset: Int, profiles: SpeakerProfiles, cancelled: () -> Boolean): List<SpeakerTurn> {
+        val times = FunVad.detect(vad, pcm)
+        val chunks = mutableListOf<SpeakerTurn>()
+        val embeddings = mutableListOf<FloatArray>()
+        for (i in times.indices step 2) {
+            val start = times[i].coerceIn(0, pcm.size / 16)
+            val end = times[i + 1].coerceIn(start, pcm.size / 16)
+            // FunASR sv_chunk uses 1.5 s windows, a 0.75 s stride and a right-aligned tail.
+            var from = start
+            while (from < end) {
+                if (cancelled()) throw CancellationException()
+                val until = minOf(from + 1500, end)
+                val left = maxOf(start, until - 1500)
+                val speech = FloatArray(24000)
+                pcm.copyInto(speech, 0, left * 16, until * 16)
+                val stream = extractor.createStream()
+                try {
+                    stream.acceptWaveform(speech, 16000)
+                    stream.inputFinished()
+                    check(extractor.isReady(stream)) { "CAM++ 未能提取声音特征" }
+                    val vector = extractor.compute(stream)
+                    check(vector.isNotEmpty() && vector.all { it.isFinite() } && vector.any { it != 0f }) {
+                        "CAM++ 返回了无效的声音特征"
+                    }
+                    embeddings.add(vector)
+                } finally { stream.release() }
+                chunks.add(SpeakerTurn(offset + left, offset + until, 0))
+                if (until == end) break
+                from += 750
             }
-            val labels = funSpeakerClusters(embeddings)
-            val ids = profiles.assign(centers(embeddings, labels))
-            turns.addAll(smoothTurns(chunks.mapIndexed { i, turn -> turn.copy(id = ids[labels[i]] ?: 0) }))
         }
-        return turns
+        val labels = funSpeakerClusters(embeddings)
+        val ids = profiles.assign(centers(embeddings, labels))
+        return smoothTurns(chunks.mapIndexed { i, turn -> turn.copy(id = ids[labels[i]] ?: 0) })
     }
 
     override fun close() = extractor.release()

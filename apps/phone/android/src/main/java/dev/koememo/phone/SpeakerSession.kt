@@ -42,6 +42,7 @@ internal class SpeakerStore(context: Context, directory: File, method: SpeakerMe
     private val path = directory.canonicalFile.toPath().also { require(it != root && it.startsWith(root)) }
     private val folder = File(File(context.filesDir, method.storeRoot), root.relativize(path).toString())
     private val report = AtomicFile(File(folder, "analysis.json"))
+    private val pending = AtomicFile(File(folder, "window.json"))
     private val aliases = AtomicFile(File(folder, "names.json"))
 
     fun analysis() = readJson(report) { JSONObject().put("clips", JSONObject()).put("voices", JSONArray()) }
@@ -53,14 +54,21 @@ internal class SpeakerStore(context: Context, directory: File, method: SpeakerMe
         writeJson(aliases, names)
     }
 
+    fun partial(data: JSONObject, clip: SessionClip): JSONObject? =
+        readJson(pending, ::JSONObject).takeIf { !clip.hashMismatch && it.optString("hash") == clip.hash &&
+            it.optString("file") == clip.file.name && it.optLong("revision", -1) == data.optLong("revision") }
+
+    fun checkpoint(data: JSONObject, clip: SessionClip, endMs: Int, turns: List<SpeakerTurn>, profiles: SpeakerProfiles) {
+        writeJson(pending, JSONObject().put("hash", clip.hash).put("file", clip.file.name)
+            .put("revision", data.optLong("revision")).put("endMs", endMs)
+            .put("turns", encodeTurns(turns)).put("voices", encodeVoices(profiles)))
+    }
+
     fun save(data: JSONObject, clip: SessionClip, turns: List<SpeakerTurn>, profiles: SpeakerProfiles) {
-        val spans = JSONArray()
-        turns.forEach { spans.put(JSONArray().put(it.start).put(it.end).put(it.id)) }
-        data.getJSONObject("clips").put(clip.file.name, JSONObject().put("hash", clip.hash).put("turns", spans))
-        val voices = JSONArray()
-        for (v in profiles.voices) voices.put(JSONArray().apply { v.forEach { put(it.toDouble()) } })
-        data.put("voices", voices)
+        data.getJSONObject("clips").put(clip.file.name, JSONObject().put("hash", clip.hash).put("turns", encodeTurns(turns)))
+        data.put("voices", encodeVoices(profiles)).put("revision", data.optLong("revision") + 1)
         writeJson(report, data)
+        pending.delete()
     }
 
     companion object {
@@ -77,6 +85,15 @@ internal class SpeakerStore(context: Context, directory: File, method: SpeakerMe
         fun turns(data: JSONObject, clip: SessionClip): List<SpeakerTurn>? {
             val saved = data.getJSONObject("clips").optJSONObject(clip.file.name)
                 ?.takeIf { !clip.hashMismatch && it.optString("hash") == clip.hash } ?: return null
+            return decodeTurns(saved)
+        }
+        private fun encodeTurns(turns: List<SpeakerTurn>) = JSONArray().apply {
+            turns.forEach { put(JSONArray().put(it.start).put(it.end).put(it.id)) }
+        }
+        private fun encodeVoices(profiles: SpeakerProfiles) = JSONArray().apply {
+            for (v in profiles.voices) put(JSONArray().apply { v.forEach { put(it.toDouble()) } })
+        }
+        fun decodeTurns(saved: JSONObject): List<SpeakerTurn> {
             val list = saved.getJSONArray("turns")
             return List(list.length()) { i ->
                 val t = list.getJSONArray(i)
