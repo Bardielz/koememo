@@ -2,6 +2,9 @@ package dev.koememo.phone
 
 import android.content.Context
 import android.net.Uri
+import android.os.Build
+import android.util.Log
+import java.io.IOException
 import java.io.Closeable
 import java.io.DataInputStream
 import java.io.DataOutputStream
@@ -25,21 +28,40 @@ internal enum class TranscriptModel(val title: String, val filename: String, val
     }
 }
 
+internal enum class TranscriptBackend(val label: String) {
+    CPU("CPU"), HTP("Hexagon NPU");
+    companion object {
+        fun verifiedSoc() = Build.VERSION.SDK_INT >= 31 && Build.SOC_MODEL.equals("SM8650", ignoreCase = true)
+    }
+}
+
+internal class TranscriptInferenceFailure(message: String, cause: Throwable? = null) : Exception(message, cause)
+
 // The child only reads local files. Closing it also interrupts a blocked inference read.
-internal class TranscriptWorker(context: Context, val model: TranscriptModel) : Closeable {
+internal class TranscriptWorker(context: Context, val model: TranscriptModel,
+                                val backend: TranscriptBackend = TranscriptBackend.CPU) : Closeable {
     private val lib = File(context.applicationInfo.nativeLibraryDir)
     private val process = ProcessBuilder(File(lib, "libkoe_transcript.so").path,
         if (model.embedding) "embed" else "notes", model.file(context).path).apply {
         directory(context.cacheDir)
-        environment()["LD_LIBRARY_PATH"] = lib.path
-        // These signed libraries keep their upstream SONAMEs; preload them only in this
-        // worker so the ASR worker can still select its Snapdragon GPU and NPU backends.
-        environment()["LD_PRELOAD"] = listOf("ggml-base", "ggml", "llama").joinToString(":") {
-            File(lib, "libkoe_portable_$it.so").path
+        if (backend == TranscriptBackend.HTP) {
+            environment()["LD_LIBRARY_PATH"] = lib.path + ":/vendor/lib64:/vendor/lib64/egl"
+            environment()["ADSP_LIBRARY_PATH"] = lib.path + ";/vendor/lib/rfsa/adsp;/vendor/dsp;/dsp"
+            environment()["KOE_USE_HTP"] = "1"
+            // Keep CPU-side Gemma generation buffers out of the DSP address space.
+            if (!model.embedding) environment()["GGML_HEXAGON_HOSTBUF"] = "0"
+        } else {
+            // Portable and Snapdragon libraries have the same SONAME. Select for this process only.
+            environment()["LD_LIBRARY_PATH"] = lib.path
+            environment()["LD_PRELOAD"] = listOf("ggml-base", "ggml", "llama").joinToString(":") {
+                File(lib, "libkoe_portable_$it.so").path
+            }
+            environment()["KOE_CPU_BACKEND"] = File(lib, "libkoe_portable_ggml-cpu-android_armv8.0_1.so").path
         }
-        environment()["KOE_CPU_BACKEND"] = File(lib, "libkoe_portable_ggml-cpu-android_armv8.0_1.so").path
         redirectError(ProcessBuilder.Redirect.to(File("/dev/null")))
-    }.start()
+    }.let { builder ->
+        try { builder.start() } catch (error: IOException) { throw TranscriptInferenceFailure("无法启动 ${backend.label}", error) }
+    }
     private val reader = DataInputStream(process.inputStream.buffered())
     private val writer = DataOutputStream(process.outputStream.buffered())
     private var ready = false
@@ -48,15 +70,23 @@ internal class TranscriptWorker(context: Context, val model: TranscriptModel) : 
         require(n in 0..65536) { "模型返回无效长度" }
         return ByteArray(n).also(reader::readFully)
     }
-    fun run(text: String): ByteArray {
-        if (!ready) {
-            check(receive().decodeToString() == "ready") { "模型初始化失败" }
+    fun initialize() {
+        if (ready) return
+        try {
+            val expected = if (backend == TranscriptBackend.HTP) "HTP0" else "ready"
+            if (receive().decodeToString() != expected) throw TranscriptInferenceFailure("未确认 ${backend.label} 模型分配")
             ready = true
-        }
+            Log.i("KoeMemoGemma", "model=${model.name} backend=${backend.name} initialized")
+        } catch (error: IOException) { throw TranscriptInferenceFailure("${backend.label} 模型初始化失败", error) }
+    }
+    fun run(text: String): ByteArray {
+        initialize()
         val bytes = text.encodeToByteArray()
         require(bytes.size in 1..65536) { "文字超过单次输入范围" }
-        writer.writeInt(bytes.size); writer.write(bytes); writer.flush()
-        return receive()
+        try {
+            writer.writeInt(bytes.size); writer.write(bytes); writer.flush()
+            return receive()
+        } catch (error: IOException) { throw TranscriptInferenceFailure("${backend.label} 推理进程已退出", error) }
     }
     override fun close() {
         process.destroyForcibly()

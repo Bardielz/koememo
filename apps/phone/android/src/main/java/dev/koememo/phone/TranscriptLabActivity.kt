@@ -10,7 +10,6 @@ import com.google.android.material.button.MaterialButton
 import com.google.android.material.dialog.MaterialAlertDialogBuilder
 import dev.koememo.sync.sha256
 import org.json.JSONObject
-import java.io.EOFException
 import java.io.File
 import java.util.concurrent.Executors
 
@@ -29,6 +28,9 @@ class TranscriptLabActivity : AppCompatActivity() {
     private var selection = 0
     private var pending: TranscriptModel? = null
     private var busy = false
+    private val backendSettings by lazy { getSharedPreferences("transcript-inference", MODE_PRIVATE) }
+    private val preferredBackend get() = if (TranscriptBackend.verifiedSoc() && backendSettings.getBoolean("prefer_htp", true))
+        TranscriptBackend.HTP else TranscriptBackend.CPU
 
     override fun onCreate(state: Bundle?) {
         super.onCreate(state)
@@ -95,8 +97,7 @@ class TranscriptLabActivity : AppCompatActivity() {
         busy = true; status.text = message; drawControls()
         io.execute {
             val outcome = runCatching { action() }.getOrElse {
-                if (it is EOFException) "推理进程提前退出，请检查可用内存或缩短文字范围"
-                else "实验未完成 · " + (it.localizedMessage ?: it.javaClass.simpleName)
+                "实验未完成 · " + (it.localizedMessage ?: it.javaClass.simpleName)
             }
             ui { busy = false; status.text = outcome; drawControls() }
         }
@@ -108,6 +109,16 @@ class TranscriptLabActivity : AppCompatActivity() {
         form.removeAllViews()
         for (model in TranscriptModel.entries.filterNot { it.file(this).isFile }) button("导入 ${model.title}") {
             pending = model; startActivityForResult(Intent(Intent.ACTION_OPEN_DOCUMENT_TREE), 1)
+        }
+        if (TranscriptBackend.verifiedSoc()) {
+            button("推理处理器　" + if (preferredBackend == TranscriptBackend.HTP) "优先 Hexagon NPU" else "CPU") {
+                MaterialAlertDialogBuilder(this).setTitle("纪要和索引处理器")
+                    .setSingleChoiceItems(arrayOf("优先 Hexagon NPU", "CPU"), if (preferredBackend == TranscriptBackend.HTP) 0 else 1) { dialog, i ->
+                        dialog.dismiss()
+                        backendSettings.edit().putBoolean("prefer_htp", i == 0).apply()
+                        drawControls(); showSaved()
+                    }.show()
+            }
         }
         if (batches.isEmpty()) return
         button("对照范围　${selection + 1} / ${batches.size}") {
@@ -122,15 +133,15 @@ class TranscriptLabActivity : AppCompatActivity() {
             button("建立整场 ${model.title} 文字索引", model.file(this).isFile) {
                 work("建立索引中") {
                     val lines = batches.flatten()
-                    withWorker(model) { w ->
+                    val backend = withWorker(model) { w ->
                         TranscriptIndex(this).use { index ->
-                            index.build(session, engine.key, model, lines, w::run) { done ->
+                            index.build(session, engine.key, model, lines, w::run, { done ->
                                 check(!closed)
-                                if (done % 10 == 0) ui { status.text = "索引 $done / ${lines.size}" }
-                            }
+                                if (done % 10 == 0) ui { status.text = "${w.backend.label} 索引 $done / ${lines.size}" }
+                            }, w.backend)
                         }
                     }
-                    "${model.title} 索引已保存 · ${lines.size} 个原音位置"
+                    "${model.title} 索引已保存 · ${backend.label} · ${lines.size} 个原音位置"
                 }
             }
         }
@@ -145,16 +156,27 @@ class TranscriptLabActivity : AppCompatActivity() {
             model.install(this, tree); "${model.title} 已就绪"
         }
     }
-    private fun withWorker(model: TranscriptModel, call: (TranscriptWorker) -> Unit) {
-        TranscriptWorker(this, model).use {
-            worker = it
-            try { check(!closed); call(it) } finally { worker = null }
+    private fun withWorker(model: TranscriptModel, call: (TranscriptWorker) -> Unit): TranscriptBackend {
+        fun execute(backend: TranscriptBackend): TranscriptBackend {
+            TranscriptWorker(this, model, backend).use {
+                worker = it
+                try { check(!closed); it.initialize(); call(it) } finally { worker = null }
+            }
+            return backend
+        }
+        val preferred = preferredBackend
+        return try { execute(preferred) } catch (e: TranscriptInferenceFailure) {
+            if (preferred == TranscriptBackend.CPU || closed) throw e
+            android.util.Log.w("KoeMemoGemma", "${model.name} HTP failed; retrying on CPU", e)
+            ui { status.text = "${model.title} · NPU 不可用，正在用 CPU 重试" }
+            execute(TranscriptBackend.CPU)
         }
     }
-    private fun noteFile(model: TranscriptModel, lines: List<TranscriptLine>): AtomicFile {
+    private fun noteFile(model: TranscriptModel, lines: List<TranscriptLine>, preference: TranscriptBackend = preferredBackend): AtomicFile {
         val fingerprint = stableDigest(org.json.JSONArray(listOf("notes-v1", session, engine.key, model.sha,
             lines.first().clip.file.name, lines.first().clip.hash) + lines.map { listOf(it.start, it.end, it.speaker, it.text) }).toString())
-        return AtomicFile(File(filesDir, "meeting-notes/$fingerprint.json"))
+        val suffix = if (preference == TranscriptBackend.CPU) "" else "-htp-preferred"
+        return AtomicFile(File(filesDir, "meeting-notes/$fingerprint$suffix.json"))
     }
     private fun compare(readers: List<TranscriptModel>) {
         val lines = batches[selection]
@@ -168,22 +190,25 @@ class TranscriptLabActivity : AppCompatActivity() {
                 withWorker(model) { w ->
                     val output = w.run(prompt).decodeToString()
                     writeJson(noteFile(model, lines), JSONObject().put("output",output)
-                        .put("elapsed_ms",SystemClock.elapsedRealtime() - start))
+                        .put("backend", w.backend.name).put("elapsed_ms",SystemClock.elapsedRealtime() - start))
                 }
                 ui { showSaved() }
             }
-            "对照完成 · 同一文字范围、提示词和 CPU 解码设置"
+            "对照完成 · 同一文字范围、提示词和贪心解码设置"
         }
     }
     private fun showSaved() {
         results.removeAllViews()
         val lines = batches.getOrNull(selection) ?: return
         for (model in listOf(TranscriptModel.MEETING, TranscriptModel.BASE)) {
-            val data = readJson(noteFile(model, lines), ::JSONObject)
+            val data = readJson(noteFile(model, lines)) {
+                readJson(noteFile(model, lines, TranscriptBackend.CPU), ::JSONObject)
+            }
             if (!data.has("output")) continue
             val output = data.getString("output")
             results.addView(TextView(this).apply {
-                text = "${model.title} · ${data.getLong("elapsed_ms") / 1000.0} 秒"
+                val backend = TranscriptBackend.valueOf(data.optString("backend", TranscriptBackend.CPU.name))
+                text = "${model.title} · ${backend.label} · ${data.getLong("elapsed_ms") / 1000.0} 秒"
                 setTextAppearance(com.google.android.material.R.style.TextAppearance_Material3_TitleMedium)
             })
             val notes = runCatching { meetingNotes(output, lines) }
