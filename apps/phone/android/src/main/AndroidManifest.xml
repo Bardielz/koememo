@@ -7,6 +7,8 @@
         <package android:name="com.google.android.wearable.app.cn" />
     </queries>
     <application android:label="KoeMemo" android:allowBackup="false" android:enableOnBackInvokedCallback="true" android:theme="@style/PhoneTheme">
+        <uses-native-library android:name="libOpenCL.so" android:required="false" />
+        <uses-native-library android:name="libcdsprpc.so" android:required="false" />
         <service android:name=".SyncService" android:exported="false" android:foregroundServiceType="dataSync" />
         <service android:name=".TranscriptionJob" android:exported="true" android:permission="android.permission.BIND_JOB_SERVICE" />
         <activity android:name=".TranscriptionActivity" android:exported="false" />

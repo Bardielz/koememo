@@ -3,12 +3,16 @@ android {
     namespace 'dev.koememo.phone'
     compileSdk 35
     defaultConfig { applicationId 'dev.watchmemory'; minSdk 30; targetSdk 35; versionCode 8; versionName '0.1.7-dev' }
+    ndkVersion "27.2.12479018"
+    defaultConfig.testInstrumentationRunner = 'androidx.test.runner.AndroidJUnitRunner'
     compileOptions { sourceCompatibility JavaVersion.VERSION_17; targetCompatibility JavaVersion.VERSION_17 }
     kotlinOptions { jvmTarget = '17' }
     lint { abortOnError true }
 }
 dependencies {
     implementation 'com.google.android.material:material:1.14.0'
+    androidTestImplementation 'androidx.test.ext:junit:1.2.1'
+    androidTestImplementation 'androidx.test:runner:1.6.2'
     testImplementation 'junit:junit:4.13.2'
     testImplementation 'org.json:json:20240303'
 }
@@ -18,3 +22,21 @@ android.sourceSets.main.java.srcDir rootProject.file('../../../packages/contract
 android.sourceSets.main.java.srcDir rootProject.file('../../../packages/android/telemetry/src')
 
 dependencies { implementation 'com.k2fsa:sherpa-onnx:1.12.20@aar' }
+
+// The worker and its accelerator libraries ship in the signed APK. Only weights are imported at runtime.
+def asrBuild = layout.buildDirectory.dir('generated/asr')
+def asrScript = rootProject.file('../../../tools/asr/build_android.py')
+def buildAsr = tasks.register('buildPhoneAsr', Exec) {
+    inputs.files(asrScript, fileTree('src/main/cpp'))
+    outputs.dir(asrBuild)
+    def ndk = providers.environmentVariable('ANDROID_NDK_HOME').orElse(
+            new File(android.sdkDirectory, 'ndk/27.2.12479018').absolutePath)
+    inputs.property('ndkPath', ndk)
+    commandLine (System.getProperty('os.name').startsWith('Windows') ? 'python' : 'python3'), asrScript, '--ndk', ndk.get(), '--output', asrBuild.get().asFile,
+            '--cache', new File(gradle.gradleUserHomeDir, 'caches/koememo-asr')
+}
+android.sourceSets.main.jniLibs.srcDir(asrBuild.map { it.dir('jni') })
+android.sourceSets.main.assets.srcDir(asrBuild.map { it.dir('assets') })
+android.packaging.jniLibs.useLegacyPackaging = true
+android.packaging.jniLibs.keepDebugSymbols += '**/libggml-htp-*.so'
+tasks.named('preBuild').configure { dependsOn(buildAsr) }

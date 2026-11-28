@@ -25,6 +25,9 @@ class TranscriptionActivity : AppCompatActivity() {
     private lateinit var target: File
     private lateinit var status: TextView
     private lateinit var action: Button
+    private lateinit var modelAction: Button
+    private var choice = AsrChoice.legacy
+    private val modelSettings by lazy { getSharedPreferences("asr-model", MODE_PRIVATE) }
     private lateinit var search: EditText
     private lateinit var player: RecordingPlayer
     private val io = Executors.newSingleThreadExecutor()
@@ -61,6 +64,7 @@ class TranscriptionActivity : AppCompatActivity() {
         val root = File(filesDir, "audio").canonicalFile
         if (directory == null || directory == root || !directory.toPath().startsWith(root.toPath()) ||
             !(target.isDirectory || target.isAudioSegment())) { finish(); return }
+        choice = TranscriptionJob.choice(this, target) ?: AsrChoice.from(modelSettings.getString("selected", null))
         speakers = SpeakerStore(this, directory)
         val layout = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; isFocusableInTouchMode = true }
         layout.setOnApplyWindowInsetsListener { view, insets ->
@@ -74,6 +78,10 @@ class TranscriptionActivity : AppCompatActivity() {
                 startActivity(Intent(this@TranscriptionActivity, SpeakerActivity::class.java).putExtra("directory", directory.path))
             }
         })
+        modelAction = MaterialButton(this, null, androidx.appcompat.R.attr.borderlessButtonStyle).apply {
+            setOnClickListener { selectModel() }
+        }
+        layout.addView(modelAction)
         status = TextView(this).apply { setPadding(dp(16), dp(4), dp(16), dp(4)) }
         action = MaterialButton(this).apply { setOnClickListener { toggle() } }
         search = EditText(this).apply { setSingleLine(); hint = "搜索文字稿"; setText(state?.getString("query").orEmpty()) }
@@ -123,6 +131,7 @@ class TranscriptionActivity : AppCompatActivity() {
     }
 
     private fun load(changedFile: File? = null) {
+        val selectedModel = choice
         io.execute {
             try {
                 val directory = if (target.isDirectory) target else target.parentFile!!
@@ -134,9 +143,10 @@ class TranscriptionActivity : AppCompatActivity() {
                 val changedHash = session.clips.firstOrNull { it.file == changedFile }?.hash
                 val selected = session.clips.filter { (target == directory || it.file == target) &&
                     (changedFile == null || it.hash == changedHash) }
-                val result = selected.associate { clip -> clip.file to try { readPage(clip) }
+                val result = selected.associate { clip -> clip.file to try { readPage(clip, selectedModel) }
                     catch (e: Exception) { Page(false, emptyList(), "${clip.file.name} · ${e.localizedMessage}") } }
                 ui {
+                    if (selectedModel != choice) return@ui
                     val previousSize = pages[changedFile]?.lines?.size ?: 0
                     val redraw = changedFile == null || result.any { (file, page) -> pages[file]?.lines != page.lines }
                     if (changedFile == null) pages.clear()
@@ -149,8 +159,8 @@ class TranscriptionActivity : AppCompatActivity() {
             } catch (e: Exception) { ui { status.text = "无法读取文字稿 · ${e.localizedMessage}" } }
         }
     }
-    private fun readPage(clip: SessionClip): Page {
-        val checkpoint = LocalTranscription(this, clip)
+    private fun readPage(clip: SessionClip, model: AsrChoice): Page {
+        val checkpoint = LocalTranscription(this, clip, model)
         val data = checkpoint.snapshot()
         val edits = checkpoint.corrections()
         val windows = data.getJSONArray("windows")
@@ -184,17 +194,20 @@ class TranscriptionActivity : AppCompatActivity() {
         val active = TranscriptionJob.active(this)
         val mine = active == target.path
         val complete = pages.isNotEmpty() && pages.values.all { it.complete }
-        val model = AsrModel.directory(this).isDirectory
+        modelAction.text = choice.label
+        modelAction.contentDescription = "选择转写模型和处理器，当前 ${choice.label}"
+        modelAction.isEnabled = !mine && !importing
+        val model = choice.family.directory(this).isDirectory
         action.text = when {
             mine -> "暂停转写"
             active != null -> "其他录音正在转写"
             complete -> "已完成转写"
-            !model -> "导入 SenseVoice 模型"
+            !model -> "导入 ${choice.family.label} 模型"
             target.isDirectory -> "开始／继续整场转写"
             else -> "开始／继续本段转写"
         }
         action.isEnabled = !importing && (mine || (active == null && ready && pages.isNotEmpty() && !complete))
-        val last = TranscriptionJob.status(this, target.path)
+        val last = TranscriptionJob.status(this, target.path, choice)
         val detail = when {
             mine || last.isEmpty() -> last
             last.startsWith("正在转写") || last == "等待系统调度" || last.startsWith("系统暂缓") -> "任务已中断，可继续转写"
@@ -210,10 +223,37 @@ class TranscriptionActivity : AppCompatActivity() {
             pages.values.firstNotNullOfOrNull { it.error }?.let { "读取失败 · $it" },
             progress).joinToString("\n")
     }
+    private fun selectModel() {
+        val families = AsrFamily.entries
+        MaterialAlertDialogBuilder(this).setTitle("转写模型")
+            .setSingleChoiceItems(families.map { it.label }.toTypedArray(), families.indexOf(choice.family)) { dialog, index ->
+                dialog.dismiss()
+                val family = families[index]
+                if (family == AsrFamily.SENSE) changeModel(AsrChoice.legacy)
+                else {
+                    val processors = AsrProcessor.entries
+                    MaterialAlertDialogBuilder(this).setTitle("${family.label} · 推理处理器")
+                        .setSingleChoiceItems(processors.map { it.label }.toTypedArray(), processors.indexOf(choice.processor)) { selector, which ->
+                            selector.dismiss()
+                            changeModel(AsrChoice(family, processors[which]))
+                        }.setNegativeButton("取消", null).show()
+                }
+            }.setNegativeButton("取消", null).show()
+    }
+    private fun changeModel(selected: AsrChoice) {
+        if (choice == selected) return
+        choice = selected
+        modelSettings.edit().putString("selected", choice.key).apply()
+        pages.clear()
+        ready = false
+        filter()
+        controls()
+        load()
+    }
     private fun toggle() {
         try {
             if (TranscriptionJob.active(this) == target.path) TranscriptionJob.pause(this, target)
-            else if (AsrModel.directory(this).isDirectory) TranscriptionJob.start(this, target)
+            else if (choice.family.directory(this).isDirectory) TranscriptionJob.start(this, target, choice)
             else startActivityForResult(Intent(Intent.ACTION_OPEN_DOCUMENT_TREE), 1)
         } catch (e: Exception) { status.text = e.localizedMessage }
     }
@@ -227,7 +267,7 @@ class TranscriptionActivity : AppCompatActivity() {
         importing = true
         controls()
         io.execute {
-            val resultText = runCatching { AsrModel.import(this, tree); "模型已就绪" }.getOrElse { "导入失败 · ${it.message}" }
+            val resultText = runCatching { choice.family.install(this, tree); "模型已就绪" }.getOrElse { "导入失败 · ${it.message}" }
             ui { importing = false; controls(); status.text = resultText }
         }
     }
@@ -241,10 +281,11 @@ class TranscriptionActivity : AppCompatActivity() {
         }
     }
     private fun edit(line: Line) {
+        val selectedModel = choice
         val input = EditText(this).apply { setText(line.text) }
         fun save(replacement: String?) {
             io.execute {
-                val outcome = runCatching { LocalTranscription(this, line.clip).correct(line.start, replacement) }
+                val outcome = runCatching { LocalTranscription(this, line.clip, selectedModel).correct(line.start, replacement) }
                 ui { outcome.onSuccess { load(line.clip.file) }.onFailure { status.text = "保存校订失败 · ${it.localizedMessage}" } }
             }
         }

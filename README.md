@@ -131,6 +131,8 @@ python3 tools/audio/audit.py /path/to/new-export/files/recordings
 
 导入 SenseVoice INT8 后可一键转写整场已同步录音。离开页面后由安卓系统调度继续处理，手动暂停后可从已保存的约 15 秒窗口继续。搜索文字可跨分段回听，长按校订会保留识别原文。需要单独转写或导出时，打开录音右上角的「音频文件」，点对应文件的更多按钮。[手机端说明](apps/phone/README.md)
 
+在手机文字稿中点模型名，可选 SenseVoice、Fun-ASR-Nano 或 Qwen3-ASR。后两者可在兼容的骁龙手机上选择 CPU、Adreno GPU 或 Hexagon NPU。每种组合分别保存转写进度和校订。[手机模型与处理器](apps/phone/README.md#选择端侧转写模型)
+
 整场文字稿右上角的「发言人」可在手机离线区分本次录音中的不同声音。点「回听」核对后可手动命名；一个转写窗口里有多种声音时会一并标出。模型和结果仅保存在手机，名称只用于这次录音。[模型导入与使用](apps/phone/README.md#区分发言人)
 
 手表端另有独立运行的 [Watch5 卸载探针](tools/probes/watch-offload/README.md)和 [RNNoise CPU/GPU 对照](tools/probes/rnnoise-gpu/README.md)。

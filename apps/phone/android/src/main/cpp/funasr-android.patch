@@ -1,0 +1,48 @@
+--- a/funasr-cli.cpp
++++ b/funasr-cli.cpp
+@@ -163,7 +163,7 @@
+     ggml_cgraph*gf=ggml_new_graph_custom(c,32768,false); ggml_build_forward_expand(gf,x);
+     ggml_gallocr_t ga=ggml_gallocr_new(ggml_backend_cpu_buffer_type()); ggml_gallocr_alloc_graph(ga,gf);
+     ggml_backend_tensor_set(inp,fbank.data(),0,ggml_nbytes(inp));
+-    ggml_backend_cpu_set_n_threads(be,8); ggml_backend_graph_compute(be,gf);
++    ggml_backend_cpu_set_n_threads(be,4); require_ok(ggml_backend_graph_compute(be,gf) == GGML_STATUS_SUCCESS, "Fun-ASR encoder");
+     Dout=(int)x->ne[0]; std::vector<float> out((size_t)Dout*T); ggml_backend_tensor_get(x,out.data(),0,ggml_nbytes(x));
+     ggml_gallocr_free(ga); ggml_free(c); ggml_backend_free(be); return out;
+ }
+@@ -175,7 +175,7 @@
+     for(int i=0;i<n;i++){pos[i]=n_past+i;sid[i]=s0.data();}
+     if(last_logits) lg[n-1]=1;
+     llama_batch b={n,tok,embd,pos.data(),nsid.data(),sid.data(),lg.data()};
+-    int r=llama_decode(ctx,b); n_past+=n; return r;
++    int r=llama_decode(ctx,b); require_ok(r == 0, "language decoder"); n_past+=n; return r;
+ }
+ 
+ // ---- encoder + LLM bundle, loaded once, reused per decode window ----
+@@ -199,21 +199,18 @@
+     if(!load_enc(enc_path,d.em)) return false;
+     ggml_backend_load_all();
+     llama_model_params mp=llama_model_default_params();
+-#if defined(__APPLE__)
+-    // FunASR Nano's decoder is the realtime bottleneck on Apple Silicon. Offload
+-    // every supported layer to Metal so streaming does not fall behind the input.
+-    mp.n_gpu_layers=99;
+-#else
+-    mp.n_gpu_layers=0;
+-#endif
++    select_layers(mp);
++    bool adreno = devices[0] && strcmp(ggml_backend_dev_name(devices[0]), "GPUOpenCL") == 0;
++    if (adreno) mp.n_gpu_layers = 14;
+     d.model=llama_model_load_from_file(llm_path,mp); if(!d.model) return false;
+     d.vocab=llama_model_get_vocab(d.model);
+     llama_context_params cp=llama_context_default_params();
+-    cp.n_ctx=2048; cp.n_batch=2048; cp.n_ubatch=2048;
++    cp.n_ctx=2048; cp.n_batch=512; cp.n_ubatch=256; cp.n_threads=4; cp.n_threads_batch=4;
++    if (adreno) { cp.flash_attn_type=LLAMA_FLASH_ATTN_TYPE_DISABLED; cp.offload_kqv=false; cp.op_offload=false; }
+     d.ctx=llama_init_from_model(d.model,cp);
+     if(!d.ctx){fprintf(stderr,"failed to create llama context\n");return false;}
+     auto sp=llama_sampler_chain_default_params(); d.smpl=llama_sampler_chain_init(sp);
+-    if(rep!=1.0f) llama_sampler_chain_add(d.smpl,llama_sampler_init_penalties(256,rep,0.0f,0.0f));
++    if(rep!=1.0f) llama_sampler_chain_add(d.smpl,llama_sampler_init_penalties(llama_vocab_n_tokens(d.vocab),256,rep,0.0f,0.0f));
+     llama_sampler_chain_add(d.smpl,llama_sampler_init_greedy());
+     // prompt mirrors FunASRNano.get_prompt(): 语音转写：" / 语音转写成<lang>："
+     std::string prefix="<|im_start|>system\nYou are a helpful assistant.<|im_end|>\n<|im_start|>user\n语音转写";

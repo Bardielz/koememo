@@ -9,7 +9,6 @@ import android.content.Context
 import android.os.Handler
 import android.os.Looper
 import android.os.PersistableBundle
-import com.k2fsa.sherpa.onnx.OfflineRecognizer
 import java.io.File
 import java.util.concurrent.CancellationException
 import java.util.concurrent.Executors
@@ -23,6 +22,7 @@ class TranscriptionJob : JobService() {
 
     override fun onStartJob(params: JobParameters): Boolean {
         val scope = params.extras.getString(SCOPE) ?: return false
+        val choice = AsrChoice.from(params.extras.getString("engine"))
         val id = params.extras.getString("id") ?: return false
         if (prefs(this).getString("request", null) != id) return false
         execution?.set(true)
@@ -30,12 +30,12 @@ class TranscriptionJob : JobService() {
         execution = cancelled
         executionId = id
         executor.execute {
-            var recognizer: OfflineRecognizer? = null
+            var recognizer: PhoneRecognizer? = null
             var current: File? = null
             fun publish(message: String?, file: File? = null) {
                 main.post {
                     if (execution === cancelled && prefs(this).getString("request", null) == id) {
-                        if (message != null) record(this, scope, message)
+                        if (message != null) record(this, scope, message, choice)
                         notifyChange(file)
                     }
                 }
@@ -49,7 +49,7 @@ class TranscriptionJob : JobService() {
                 for ((index, clip) in clips.withIndex()) {
                     if (cancelled.get()) throw CancellationException()
                     current = clip.file
-                    val transcript = LocalTranscription(this, clip)
+                    val transcript = LocalTranscription(this, clip, choice)
                     val data = try {
                         check(!clip.hashMismatch) { "音频校验失败，请重新同步" }
                         transcript.snapshot()
@@ -59,7 +59,7 @@ class TranscriptionJob : JobService() {
                     }
                     if (data.optBoolean("complete")) continue
                     publish("正在转写 ${index + 1}/${clips.size} · ${clip.file.name}")
-                    val engine = recognizer ?: LocalTranscription.recognizer(this).also { recognizer = it }
+                    val engine = recognizer ?: openRecognizer(this, choice).also { recognizer = it }
                     try { transcript.run(data, engine, cancelled::get) { publish(null, clip.file) } }
                     catch (e: CancellationException) { throw e }
                     catch (e: Exception) { failures.add("${clip.file.name} · ${e.localizedMessage}") }
@@ -70,14 +70,14 @@ class TranscriptionJob : JobService() {
             } catch (_: CancellationException) { null }
             catch (e: Exception) { "转写中断 · ${current?.name.orEmpty()} ${e.localizedMessage.orEmpty()}" }
             catch (_: LinkageError) { "设备无法加载识别运行库" }
-            finally { recognizer?.release() }
+            finally { recognizer?.close() }
             main.post {
                 if (execution === cancelled) {
                     execution = null
                     executionId = null
                     if (prefs(this).getString("request", null) == id) {
                         prefs(this).edit().remove("request").apply()
-                        if (message != null) record(this, scope, message)
+                        if (message != null) record(this, scope, message, choice)
                     }
                     jobFinished(params, false)
                     notifyChange(null)
@@ -96,7 +96,7 @@ class TranscriptionJob : JobService() {
         val scope = params.extras.getString(SCOPE) ?: return false
         // cancel() can race with onStopJob. Only retry the same, still requested task.
         val retry = prefs(this).getString("request", null) == id
-        if (retry) record(this, scope, "系统暂缓，等待继续")
+        if (retry) record(this, scope, "系统暂缓，等待继续", AsrChoice.from(params.extras.getString("engine")))
         notifyChange(null)
         return retry
     }
@@ -114,15 +114,22 @@ class TranscriptionJob : JobService() {
             val extras = scheduler(context).getPendingJob(ID)?.extras ?: return null
             return extras.getString(SCOPE).takeIf { extras.getString("id") == id }
         }
-        fun status(context: Context, scope: String) = prefs(context).getString("message:$scope", "").orEmpty()
-        private fun record(context: Context, scope: String, message: String) {
-            prefs(context).edit().putString("message:$scope", message).apply()
+        internal fun choice(context: Context, target: File): AsrChoice? {
+            if (active(context) != target.path) return null
+            return AsrChoice.from(scheduler(context).getPendingJob(ID)?.extras?.getString("engine"))
+        }
+        private fun messageKey(scope: String, choice: AsrChoice) =
+            if (choice == AsrChoice.legacy) "message:$scope" else "message:${choice.key}:$scope"
+        internal fun status(context: Context, scope: String, choice: AsrChoice) =
+            prefs(context).getString(messageKey(scope, choice), "").orEmpty()
+        private fun record(context: Context, scope: String, message: String, choice: AsrChoice) {
+            prefs(context).edit().putString(messageKey(scope, choice), message).apply()
         }
 
-        fun start(context: Context, target: File) {
+        internal fun start(context: Context, target: File, choice: AsrChoice = AsrChoice.legacy) {
             check(active(context) == null) { "已有转写任务，请等待完成或先暂停" }
             val id = java.util.UUID.randomUUID().toString()
-            val extras = PersistableBundle().apply { putString(SCOPE, target.path); putString("id", id) }
+            val extras = PersistableBundle().apply { putString(SCOPE, target.path); putString("id", id); putString("engine", choice.key) }
             val job = JobInfo.Builder(ID, ComponentName(context, TranscriptionJob::class.java))
                 .setExtras(extras).setPersisted(true).setMinimumLatency(0).build()
             check(prefs(context).edit().putString("request", id).commit()) { "无法保存任务" }
@@ -130,15 +137,15 @@ class TranscriptionJob : JobService() {
                 prefs(context).edit().remove("request").apply()
                 error("系统未接受转写任务")
             }
-            record(context, target.path, "等待系统调度")
+            record(context, target.path, "等待系统调度", choice)
             notifyChange(null)
         }
 
         fun pause(context: Context, target: File) {
-            if (active(context) != target.path) return
+            val choice = choice(context, target) ?: return
             prefs(context).edit().remove("request").apply()
             scheduler(context).cancel(ID)
-            record(context, target.path, "已暂停，可继续转写")
+            record(context, target.path, "已暂停，可继续转写", choice)
             notifyChange(null)
         }
     }

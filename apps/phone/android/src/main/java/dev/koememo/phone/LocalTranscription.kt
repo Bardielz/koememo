@@ -24,16 +24,17 @@ internal fun writeJson(file: AtomicFile, json: JSONObject) = synchronized(transc
     catch (error: Exception) { file.failWrite(out); throw error }
 }
 
-internal class LocalTranscription(context: Context, val clip: SessionClip) {
-    private val store = AtomicFile(File(context.filesDir, "transcripts/${AsrModel.ID}-15s-v1-${clip.hash}.json"))
+internal class LocalTranscription(context: Context, val clip: SessionClip, choice: AsrChoice = AsrChoice.legacy) {
+    private val modelKey = choice.key
+    private val store = AtomicFile(File(context.filesDir, "transcripts/$modelKey-15s-v1-${clip.hash}.json"))
     private val source = clip.file.canonicalFile.toPath().let { path ->
         val root = File(context.filesDir, "audio").canonicalFile.toPath()
         require(path.startsWith(root)) { "找不到原音来源" }
         root.relativize(path).toString()
     }
-    private val edits = AtomicFile(File(context.filesDir, "transcript-edits/$source.${clip.hash}.${AsrModel.ID}-15s-v1.json"))
+    private val edits = AtomicFile(File(context.filesDir, "transcript-edits/$source.${clip.hash}.$modelKey-15s-v1.json"))
     fun snapshot() = readJson(store) {
-        JSONObject().put("model", AsrModel.ID).put("sha256", clip.hash).put("windows", JSONArray())
+        JSONObject().put("model", modelKey).put("sha256", clip.hash).put("windows", JSONArray())
     }
     fun corrections() = readJson(edits, ::JSONObject)
     fun correct(startMs: Int, replacement: String?) = synchronized(transcriptFiles) {
@@ -42,7 +43,7 @@ internal class LocalTranscription(context: Context, val clip: SessionClip) {
         writeJson(edits, data)
     }
 
-    fun run(data: JSONObject, recognizer: OfflineRecognizer, cancelled: () -> Boolean, saved: () -> Unit) {
+    fun run(data: JSONObject, recognizer: PhoneRecognizer, cancelled: () -> Boolean, saved: () -> Unit) {
         val windows = data.getJSONArray("windows")
         var index = 0
         var startMs = 0L
@@ -50,12 +51,7 @@ internal class LocalTranscription(context: Context, val clip: SessionClip) {
             if (cancelled()) throw CancellationException()
             val endMs = startMs + count * 1000L / rate
             if (index >= windows.length()) {
-                val stream = recognizer.createStream()
-                val text = try {
-                    stream.acceptWaveform(samples, rate)
-                    recognizer.decode(stream)
-                    recognizer.getResult(stream).text.trim()
-                } finally { stream.release() }
+                val text = recognizer.transcribe(samples, rate)
                 windows.put(JSONObject().put("start_ms", startMs).put("end_ms", endMs).put("text", text))
                 writeJson(store, data)
                 saved()

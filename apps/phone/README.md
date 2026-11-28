@@ -12,6 +12,22 @@
 
 已保存的窗口可跨文件搜索，点文字从该窗口起点回听。长按文字可校订或恢复识别原文；校订绑定来源文件和内容哈希。固定窗可能切断词语，暂未提供逐词时间戳。模型缺失时可以查看已有结果和播放录音。音频和识别文字存放在手机应用私有目录。
 
+## 选择端侧转写模型
+
+打开一场录音的「文字稿」，点当前模型名，选择模型和处理器。首次使用时，点「导入模型」选择含下表两个文件的目录。应用核对 SHA-256 后将权重保存到私有目录。同一模型的三种处理器共享权重。
+
+| 模型 | 本地文件 | 手机后端 |
+| --- | --- | --- |
+| SenseVoice | `model.int8.onnx`、`tokens.txt` | CPU |
+| [Fun-ASR-Nano-2512](https://huggingface.co/FunAudioLLM/Fun-ASR-Nano-GGUF/tree/46e849502a867080d66d351b8dfb1018b607e509) | `funasr-encoder-f16.gguf`、`qwen3-0.6b-q8_0.gguf` | CPU、Adreno GPU、Hexagon NPU |
+| [Qwen3-ASR-1.7B](https://huggingface.co/ggml-org/Qwen3-ASR-1.7B-GGUF/tree/3b2c29585c2180452ccb14d3b6b58127f352400d) | `mmproj-Qwen3-ASR-1.7B-Q8_0.gguf`、`Qwen3-ASR-1.7B-Q8_0.gguf` | CPU、Adreno GPU、Hexagon NPU |
+
+两类 GGUF 模型使用随 APK 安装的 ARM64 Snapdragon 运行库。音频编码器在 CPU 上运行，所选处理器承担语言解码。Fun-ASR 的 Adreno 路径使用 14 个解码层，其余层在 CPU 上运行。一加 12 的对照中，全层 Adreno 卸载曾将清晰语音识别成重复标点。应用会检查所选加速器的层分配，初始化失败时显示错误，可手动改选 CPU。一次任务复用已加载的权重，每个 15 秒音频窗口独立解码。
+
+模型和处理器在任务开始时固定。各组合各自保存文字、校订与进度，切回 SenseVoice 可继续使用原有结果。发言人名称在同一会话内共用。
+
+构建手机 APK 需要 Python 3、Git 和 Android NDK r27c（`sdkmanager 'ndk;27.2.12479018'`）。首次构建会获取固定版本的 [Fun-ASR 源码](https://github.com/QwenAudio/Fun-ASR/tree/5df2b86c73d19fb9afca24411e4a052d9113e619/runtime/llama.cpp) 和 [llama.cpp Snapdragon 运行库](https://github.com/ggml-org/llama.cpp/releases/tag/b12830)，校验后缓存在 Gradle 用户目录。模型权重另行导入。
+
 ## 区分发言人
 
 打开一次录音 →「文字稿」→「发言人」。首次使用时，把以下两个文件放在同一文件夹，点「导入发言人模型」。模型单独导入，应用校验 SHA-256。
