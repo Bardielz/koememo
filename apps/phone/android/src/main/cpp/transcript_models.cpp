@@ -1,7 +1,8 @@
-// CPU worker for text generation and pooled document embeddings. Weights are loaded once per run.
+// Isolated worker for text generation and pooled document embeddings. Weights are loaded once per run.
 #include "llama.h"
 #include "ggml-backend.h"
 #include <arpa/inet.h>
+#include <atomic>
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>
@@ -9,6 +10,18 @@
 #include <stdexcept>
 #include <string>
 #include <vector>
+
+struct Placement {
+    std::atomic_bool htp_layer{false};
+    std::atomic_bool offloaded{false};
+};
+static void placement_log(ggml_log_level level, const char *text, void *user) {
+    auto &placement = *static_cast<Placement *>(user);
+    if (strstr(text, "assigned to device HTP0,")) placement.htp_layer = true;
+    const char *layers = strstr(text, "offloaded ");
+    if (layers && std::atoi(layers + 10) > 0) placement.offloaded = true;
+    if (level == GGML_LOG_LEVEL_ERROR) fputs(text, stderr);
+}
 
 static void check(bool ok, const char *message) {
     if (!ok) throw std::runtime_error(message);
@@ -66,16 +79,21 @@ int main(int argc, char **argv) {
     llama_model *model = nullptr;
     llama_context *ctx = nullptr;
     int status = 0;
+    Placement placement;
     try {
         const char *cpu = std::getenv("KOE_CPU_BACKEND");
         if (cpu) check(ggml_backend_load(cpu), "cannot load portable CPU backend");
         else ggml_backend_load_all();
         auto mp = llama_model_default_params();
-        ggml_backend_dev_t devices[] = { nullptr };
+        const bool hexagon = std::getenv("KOE_USE_HTP") != nullptr;
+        if (hexagon) llama_log_set(placement_log, &placement);
+        ggml_backend_dev_t devices[] = { hexagon ? ggml_backend_dev_by_name("HTP0") : nullptr, nullptr };
+        if (hexagon) check(devices[0], "Hexagon HTP0 is unavailable");
         mp.devices = devices;
-        mp.n_gpu_layers = 0;
+        mp.n_gpu_layers = hexagon ? 99 : 0;
         model = llama_model_load_from_file(argv[2], mp);
         check(model, "cannot load weights");
+        if (hexagon) check(placement.htp_layer && placement.offloaded, "no model layers assigned to HTP0");
         auto cp = llama_context_default_params();
         cp.n_ctx = embedding ? 2048 : 4096;
         cp.n_batch = cp.n_ctx;
@@ -84,7 +102,8 @@ int main(int argc, char **argv) {
         cp.n_threads = cp.n_threads_batch = 4;
         ctx = llama_init_from_model(model, cp);
         check(ctx, "cannot create context");
-        reply("ready", 5);
+        if (hexagon) reply("HTP0", 4);
+        else reply("ready", 5);
         uint32_t size;
         while (fread(&size, 4, 1, stdin) == 1) {
             size = ntohl(size);
@@ -99,5 +118,6 @@ int main(int argc, char **argv) {
     }
     if (ctx) llama_free(ctx);
     if (model) llama_model_free(model);
+    llama_log_set(nullptr, nullptr);
     return status;
 }

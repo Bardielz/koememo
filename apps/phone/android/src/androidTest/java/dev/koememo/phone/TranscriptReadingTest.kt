@@ -150,6 +150,10 @@ class TranscriptReadingTest {
                 assertTrue(hashes().all { it == stableDigest("原话") })
                 store.build(scope, "asr", TranscriptModel.EMBED2, listOf(edited), { unit }, {})
                 assertEquals(setOf(stableDigest("原话"),stableDigest("修改")), hashes().toSet())
+                store.build(scope, "asr", TranscriptModel.EMBED2, listOf(line), { unit }, {}, TranscriptBackend.HTP)
+                assertEquals(3, hashes().size)
+                store.build(scope, "asr", TranscriptModel.EMBED2, emptyList(), { error("未使用") }, {}, TranscriptBackend.HTP)
+                assertEquals(2, hashes().size)
             } finally { db.delete("document","session=?",arrayOf(scope)) }
         }
     }

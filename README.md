@@ -135,7 +135,7 @@ python3 tools/audio/audit.py /path/to/new-export/files/recordings
 
 整场文字稿右上角的「发言人」可在手机离线区分本次录音中的不同声音。选择 Fun-ASR 时使用 FSMN-VAD 与 CAM++，选择 SenseVoice 或 Qwen 时使用 pyannote 与 ERes2Net。可以回听并手动命名，一个转写窗口里有多种声音时会一并标出。[模型导入与使用](apps/phone/README.md#区分发言人)
 
-文字稿按发言人和停顿自然分段，可点原文回听，拖动刻度快速定位，并在文字稿菜单中选择导航放在左侧或右侧。开启手机实验功能后，可用同一段文字比较 Meeting Agent 和原版 Gemma 4 E2B 的纪要，也可分别用两代 EmbeddingGemma 构建离线文字索引。[文字稿实验与模型导入](apps/phone/README.md#文字稿实验)
+文字稿按发言人和停顿自然分段，可点原文回听，拖动刻度快速定位，并在文字稿菜单中选择导航放在左侧或右侧。开启手机实验功能后，可用同一段文字比较 Meeting Agent 和原版 Gemma 4 E2B 的纪要，也可分别用两代 EmbeddingGemma 构建离线文字索引。一加 12 的纪要与索引实验默认优先 Hexagon NPU，支持 CPU 对照及回退。[文字稿实验与模型导入](apps/phone/README.md#文字稿实验)
 
 
 手表端另有独立运行的 [Watch5 卸载探针](tools/probes/watch-offload/README.md)和 [RNNoise CPU/GPU 对照](tools/probes/rnnoise-gpu/README.md)。

@@ -14,10 +14,11 @@ internal class TranscriptIndex(context: Context) : SQLiteOpenHelper(context, "tr
     }
     override fun onUpgrade(db: SQLiteDatabase, old: Int, new: Int) = error("不支持的索引版本")
     fun build(session: String, engine: String, model: TranscriptModel, lines: List<TranscriptLine>,
-              encode: (String) -> ByteArray, progress: (Int) -> Unit) {
+              encode: (String) -> ByteArray, progress: (Int) -> Unit, backend: TranscriptBackend = TranscriptBackend.CPU) {
         require(model.embedding)
         val db = writableDatabase
-        val scope = arrayOf(session, engine, model.sha)
+        val modelSpace = if (backend == TranscriptBackend.CPU) model.sha else model.sha + ":" + backend.name
+        val scope = arrayOf(session, engine, modelSpace)
         // A cancelled refresh rolls back, so an existing index is always a complete snapshot.
         db.beginTransaction()
         try {
@@ -33,7 +34,7 @@ internal class TranscriptIndex(context: Context) : SQLiteOpenHelper(context, "tr
                         val vector = encode("title: none | text: " + line.text)
                         embeddingVector(vector)
                         db.insertOrThrowReplacing(ContentValues().apply {
-                            put("session", session); put("engine", engine); put("model", model.sha)
+                            put("session", session); put("engine", engine); put("model", modelSpace)
                             put("file", line.clip.file.name); put("sha", line.clip.hash)
                             put("start_ms", line.start); put("end_ms", line.end); put("text_sha", digest); put("vector", vector)
                         })
