@@ -1,13 +1,6 @@
 package dev.koememo.phone
 
 import android.app.Activity
-import android.app.ActivityOptions
-import android.graphics.PixelFormat
-import android.hardware.display.DisplayManager
-import android.hardware.display.VirtualDisplay
-import android.media.ImageReader
-import android.os.Handler
-import android.os.Looper
 import android.content.Intent
 import android.os.SystemClock
 import android.util.Log
@@ -31,8 +24,6 @@ class ProcessorTranscriptionTest(private val engineKey: String) {
     companion object {
         private var activity: Activity? = null
         private var session: File? = null
-        private var display: VirtualDisplay? = null
-        private var imageReader: ImageReader? = null
 
         @JvmStatic @Parameterized.Parameters(name = "{0}")
         fun cases() = AsrChoice.choices.filter { it.family != AsrFamily.SENSE }.map { it.key }
@@ -42,26 +33,17 @@ class ProcessorTranscriptionTest(private val engineKey: String) {
             assumeTrue("Provide a public reference transcript and 16 kHz fixture", !reference.isNullOrBlank())
             val instrumentation = InstrumentationRegistry.getInstrumentation()
             val context = instrumentation.targetContext
+            if (InstrumentationRegistry.getArguments().getString("foreground") != "true") return
             val root = File(context.filesDir, "audio").apply { mkdirs() }
             val dir = Files.createTempDirectory(root.toPath(), "asr-acceptance-").toFile()
             session = dir
-            // Give the test a visible activity without opening a recording on the user's display.
-            val reader = ImageReader.newInstance(640, 800, PixelFormat.RGBA_8888, 2)
-            imageReader = reader
-            reader.setOnImageAvailableListener({ it.acquireLatestImage()?.close() }, Handler(Looper.getMainLooper()))
-            val window = context.getSystemService(DisplayManager::class.java).createVirtualDisplay(
-                "KoeMemo ASR test", 640, 800, 240, reader.surface, DisplayManager.VIRTUAL_DISPLAY_FLAG_OWN_CONTENT_ONLY)
-            display = window
-            val options = ActivityOptions.makeBasic().setLaunchDisplayId(window.display.displayId)
             activity = instrumentation.startActivitySync(Intent(context, LibraryActivity::class.java)
                 .setFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_MULTIPLE_TASK)
-                .putExtra("segments", dir.path), options.toBundle())
+                .putExtra("segments", dir.path))
             instrumentation.runOnMainSync { activity?.window?.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON) }
         }
         @JvmStatic @AfterClass fun closeTestSession() {
             activity?.let { screen -> InstrumentationRegistry.getInstrumentation().runOnMainSync { screen.finishAndRemoveTask() } }
-            display?.release()
-            imageReader?.close()
             session?.delete()
         }
     }
