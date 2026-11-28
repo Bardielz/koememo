@@ -13,6 +13,7 @@ interface PcmInput {
     val deviceSampleRate: Int?
     val bufferSizeInFrames: Int
     val silenced: Boolean?
+    fun captureTimestamp(): android.media.AudioTimestamp? = null
     fun start()
     fun read(buffer: ByteArray): Int
     fun readDirect(buffer: ByteBuffer, length: Int): Int? = null
@@ -37,6 +38,9 @@ internal fun androidPcmInput(source: RecordingSource, rate: Int): PcmInput {
         override val deviceSampleRate get() = mic.activeRecordingConfiguration?.format?.sampleRate
         override val bufferSizeInFrames get() = mic.bufferSizeInFrames
         override val silenced get() = mic.activeRecordingConfiguration?.isClientSilenced
+        override fun captureTimestamp() = android.media.AudioTimestamp().takeIf {
+            mic.getTimestamp(it, android.media.AudioTimestamp.TIMEBASE_BOOTTIME) == AudioRecord.SUCCESS
+        }
         override fun start() {
             mic.startRecording()
             check(mic.recordingState == AudioRecord.RECORDSTATE_RECORDING) { "Microphone did not start" }

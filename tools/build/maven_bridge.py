@@ -4,7 +4,7 @@ from pathlib import Path
 import subprocess, hashlib, threading, os
 import sys
 ROOT=Path(sys.argv[1]); ROOT.mkdir(parents=True, exist_ok=True)
-BASE={'google':'https://dl.google.com/dl/android/maven2/', 'central':'https://repo.maven.apache.org/maven2/'}
+BASE={'sherpa':'https://github.com/k2-fsa/sherpa-onnx/releases/download/', 'google':'https://dl.google.com/dl/android/maven2/', 'central':'https://repo.maven.apache.org/maven2/'}
 locks={}; guard=threading.Lock()
 class Handler(BaseHTTPRequestHandler):
     def do_HEAD(self): self.fetch(False)

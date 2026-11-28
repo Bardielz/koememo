@@ -20,3 +20,5 @@ dependencies {
 }
 android.sourceSets.main.java.srcDir rootProject.file('../../../packages/contracts/audio/src')
 android.sourceSets.main.java.srcDir rootProject.file('../../../packages/android/telemetry/src')
+
+dependencies { implementation 'com.microsoft.onnxruntime:onnxruntime-android:1.20.0' }

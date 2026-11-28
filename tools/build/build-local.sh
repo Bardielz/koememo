@@ -19,7 +19,12 @@ BRIDGE_PORT=$(cat "$BUILD_TEMP/port")
 cat > "$BUILD_TEMP/repositories.gradle" <<INIT
 settingsEvaluated { settings ->
   settings.pluginManagement.repositories.clear()
-  settings.dependencyResolutionManagement.repositories.clear()
+  settings.dependencyResolutionManagement.repositories.removeIf { it instanceof MavenArtifactRepository }
+  settings.dependencyResolutionManagement.repositories.withType(IvyArtifactRepository).configureEach { repo ->
+    if (repo.url.host == 'github.com' && repo.url.path.contains('/k2-fsa/sherpa-onnx/')) {
+      repo.url = 'http://127.0.0.1:$BRIDGE_PORT/sherpa'; repo.allowInsecureProtocol = true
+    }
+  }
   ['google', 'central'].each { repo ->
     settings.pluginManagement.repositories.maven { url = 'http://127.0.0.1:$BRIDGE_PORT/' + repo; allowInsecureProtocol = true }
     settings.dependencyResolutionManagement.repositories.maven { url = 'http://127.0.0.1:$BRIDGE_PORT/' + repo; allowInsecureProtocol = true }

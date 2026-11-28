@@ -1,6 +1,6 @@
 # 安卓手机端离线转写方案
 
-状态为待实现。第一版让用户在手机录音列表选中一个已同步片段，点「本地转写」，看到带时间的文字，点一句即可回听。手表继续负责采集和保存。以每天 8～12 小时录音为容量目标，模型选型由一加手机上的真实腕部录音对照决定。
+单文件 SenseVoice INT8 转写、区间回听与进度保存已接入。自动队列、VAD 和多模型质量评测待实现。第一版让用户在手机录音列表选中一个已同步片段，点「本地转写」，看到带时间的文字，点一句即可回听。手表继续负责采集和保存。以每天 8～12 小时录音为容量目标，模型选型由一加手机上的真实腕部录音对照决定。
 
 ## 模型选择
 
@@ -38,3 +38,21 @@
 | 全天容量 | 用实际一天 8～12 小时的录音分布跑积压，记录总人声时长、完成时间、电量和温升，再决定默认模型、并发及是否默认启用自动处理。 |
 
 实施顺序为单文件手动转写与回听 → 持久化队列与断点恢复 → 双模型真机评测 → 可选充电批处理。首版完成条件是断网可用、文本能定位到原录音、进程中断后可继续；默认模型和耗电预算以实测确定。
+
+## 手机双引擎选型（2026-11-26）
+
+目标是用同一段手表录音，独立运行专用 ASR 和音频语言模型，保存两份可回听的结果。KoeMemo 当前实现了 SenseVoice INT8。下表其余引擎属于候选。
+
+| 项目 | 手机上可以复用的部分 | 优先验证的问题 |
+| --- | --- | --- |
+| SenseVoiceSmall INT8 / sherpa-onnx | 当前 Kotlin 文件识别路径。已用同一句公开普通话在一加 PJD110 验证 AAC 和 Opus 各 16、24、48 kHz，以及区间保存后续跑。[官方模型与示例](https://k2-fsa.github.io/sherpa/onnx/sense-voice/) | 5.6 秒样本的六种输入均出字，AAC 和 Opus 的结果有一字差异。全天吞吐、远讲漏词和耗电仍要独立评测。 |
+| Vosk / Kaldi | 小型中文模型 vosk-model-small-cn-0.22，官方列出 42 MB、Apache-2.0。Java 接口可增量喂 PCM、取最终结果，适合作为传统解码和小模型的基线。[模型目录](https://alphacephei.com/vosk/models) · [Android 示例](https://github.com/alphacep/vosk-android-demo) | 在低内存约束下对照中文字符错误率、专名、时间戳及每小时耗电。 |
+| Whisper / whisper.cpp | Android JNI 样例可参考模型装载、PCM 输入与线程设置。多语 base 原版文件为 142 MiB，量化版权重另计。属于专用编码器／解码器模型。[Android 示例](https://github.com/ggml-org/whisper.cpp/tree/master/examples/whisper.android) · [模型清单](https://github.com/ggml-org/whisper.cpp/blob/master/models/README.md) | 作为跨实现质量对照。中文须使用多语权重。关注静音误出字、远讲和推理耗时。 |
+| Qwen3-ASR-0.6B INT8 / sherpa-onnx | 优先接入的小型音频 LLM。已有 Android 文件识别样例，sherpa-onnx 在 1.12.34 加入了 Java／Kotlin 配置。目前项目固定 1.12.20，需要先升级手机 AAR 并回归 SenseVoice。[模型卡](https://huggingface.co/Qwen/Qwen3-ASR-0.6B) · [框架变更](https://github.com/k2-fsa/sherpa-onnx/blob/master/CHANGELOG.md#11234) · [文件识别样例](https://github.com/k2-fsa/sherpa-onnx/blob/master/flutter/sherpa_onnx/example/example.md) | 固定语言、提示、分段和生成上限，评估是否改善夹英文和专名，同时统计无声误出字、重复和漏句。词级或字级回听需验证对齐器。[Qwen3-ForcedAligner](https://github.com/QwenLM/Qwen3-ASR) |
+| Fun-ASR-Nano-2512 INT8 / sherpa-onnx | 约 0.8B，含语音编码适配器、LLM、embedding 和 tokenizer，有 ARM64 安卓示例。三个 INT8 ONNX 主文件合计约 994 MB，另需 tokenizer。[模型与 APK](https://k2-fsa.github.io/sherpa/onnx/funasr-nano/pretrained.html) · [模型包](https://huggingface.co/csukuangfj/sherpa-onnx-funasr-nano-int8-2025-12-30/tree/main) | 中文方言和口音对照。单独核对所选权重及转换包的分发许可；下载体积与峰值内存分别实测。 |
+
+**最接近的应用实例是 Recly。** 它的安卓端读取录音，以 Silero VAD 划出语音区间，再交给 Qwen3-ASR。可参考其 Kotlin 引擎、工作任务和真机冒烟测试。应用代码标注 AGPL-3.0；KoeMemo 可独立实现相同的接口分工。[识别引擎](https://github.com/rokrokss/recly/blob/main/android/app/src/main/kotlin/app/recly/android/transcribe/QwenSpeechEngine.kt) · [后台任务](https://github.com/rokrokss/recly/blob/main/android/app/src/main/kotlin/app/recly/android/work/LocalTranscriptionWorker.kt) · [真机测试](https://github.com/rokrokss/recly/blob/main/android/app/src/androidTest/kotlin/app/recly/android/transcribe/LocalSpeechSmokeTest.kt)
+
+**接入顺序。** 先将 LocalTranscription 中创建识别器和推理的部分抽成可替换接口；解码 AAC／Ogg、进度持久化和回听继续共用。第一轮并排提供 SenseVoice 和 Qwen3-ASR，按需导入模型，每次仅加载其中一个。每条结果以音频哈希、引擎和模型版本、参数与分窗版本区分，保留原文。两个引擎使用相同 PCM 和区间做配对比较。模型输出带有可靠时间信息时才展示更细的定位；LLM 听写、文本润色和说话人分段分别保存。
+
+**验收顺序。** 先跑原有六种编码／采样率交叉用例和中断续跑，再用人工校对的腕部近讲、远讲、轻声、中英混说及纯背景录音做盲测。分别给出中文字符错误率、漏句和插入、峰值 PSS、实时因子（处理秒数除以音频秒数）和每小时录音的手机净耗电；单独记录冷启动与模型复用。按 12 小时积压、8 小时夜间处理的目标，整条流程平均实时因子须不高于 0.67，并需持续运行验证热降频。

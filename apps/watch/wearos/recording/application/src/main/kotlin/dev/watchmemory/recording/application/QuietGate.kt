@@ -18,11 +18,15 @@ class QuietGate(private val rate: Int) {
         private set
 
     /** Pass the input through, return null while gated, or return replay plus the current block. */
-    fun accept(pcm: ByteArray, size: Int, micAvailable: Boolean): ByteArray? {
+    fun accept(pcm: ByteArray, size: Int, micAvailable: Boolean, voiceProbability: Float? = null): ByteArray? {
         require(size in 2..pcm.size && size % 2 == 0)
         capturedSamples += size / 2
         // Short windows preserve transients which would disappear into a 128 ms average.
-        val audible = !micAvailable || aboveThreshold(pcm, size, if (paused) 104 else 59)
+        val audible = !micAvailable || if (voiceProbability == null) {
+            aboveThreshold(pcm, size, if (paused) 104 else 59)
+        } else {
+            voiceProbability >= (if (paused) 0.60f else 0.35f)
+        }
         if (!paused) {
             quietSamples = if (audible) 0 else quietSamples + size / 2
             if (quietSamples < 10L * rate) return pcm
