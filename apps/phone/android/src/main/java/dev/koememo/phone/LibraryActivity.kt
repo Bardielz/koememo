@@ -5,7 +5,11 @@ import android.os.Bundle
 import android.widget.*
 import android.content.Intent
 import android.content.SharedPreferences
+import android.view.View
+import android.view.ViewGroup
 import dev.koememo.sync.MarkPosition
+import dev.koememo.sync.ContextWindow
+import dev.koememo.sync.PlaybackSpan
 import dev.koememo.sync.sessionTimeline
 import dev.koememo.sync.sha256
 import java.text.DateFormat
@@ -92,13 +96,15 @@ class LibraryActivity : Activity() {
         list.adapter = ArrayAdapter(this, android.R.layout.simple_list_item_1, files.map { it.parentFile!!.name + "/" + it.name })
         list.setOnItemClickListener { _, _, index, _ ->
             val file = files[index]
-            android.app.AlertDialog.Builder(this).setTitle(file.name).setItems(arrayOf("播放", "导出", "本地转写", "本次录音的标记")) { _, choice ->
+            android.app.AlertDialog.Builder(this).setTitle(file.name).setItems(arrayOf("播放", "导出", "本地转写", "本次录音的标记", "录音上下文")) { _, choice ->
                 if (choice == 0) {
                     player.play(file)
                 } else if (choice == 2) {
                     startActivity(Intent(this, TranscriptionActivity::class.java).putExtra("path", file.path))
                 } else if (choice == 3) {
                     showMarks(file)
+                } else if (choice == 4) {
+                    showContext(file)
                 } else {
                     exporting = file
                     startActivityForResult(android.content.Intent(android.content.Intent.ACTION_CREATE_DOCUMENT).apply {
@@ -109,6 +115,59 @@ class LibraryActivity : Activity() {
                 }
             }.show()
         }
+    }
+    private data class ContextItem(val span: PlaybackSpan, val window: ContextWindow, val time: Long?)
+
+    private fun showContext(file: File) {
+        Thread {
+            val result = runCatching {
+                sessionTimeline(file).flatMap { run ->
+                    run.spans.flatMap { span -> span.windows.values.map { window ->
+                        ContextItem(span, window, run.timeAt(span.file, window.startMs.toLong()))
+                    } }
+                }
+            }
+            runOnUiThread {
+                if (isDestroyed || isFinishing) return@runOnUiThread
+                val items = result.getOrElse { status.text = "无法读取录音上下文"; return@runOnUiThread }
+                if (items.isEmpty()) status.text = "此会话暂无上下文。开启手表的运动和心率实验并同步后可在此查看。"
+                else contextDialog(file, items, false)
+            }
+        }.start()
+    }
+
+    private fun contextDialog(file: File, items: List<ContextItem>, byMotion: Boolean) {
+        val sorted = if (byMotion) items.sortedByDescending { it.window.meanMotion } else items
+        val clock = DateFormat.getTimeInstance(DateFormat.MEDIUM)
+        val adapter = object : ArrayAdapter<ContextItem>(this, android.R.layout.simple_list_item_1, sorted) {
+            override fun getView(position: Int, convertView: View?, parent: ViewGroup): View {
+                val label = super.getView(position, convertView, parent) as TextView
+                val item = sorted[position]
+                val t = item.time?.let { clock.format(java.util.Date(it)) } ?: item.span.file
+                val sec = item.window.startMs / 1000
+                label.isSingleLine = false
+                label.layoutParams.height = ViewGroup.LayoutParams.WRAP_CONTENT
+                label.text = "%s　%d:%02d\n%s".format(t, sec / 60, sec % 60, item.window.description())
+                return label
+            }
+        }
+        android.app.AlertDialog.Builder(this).setTitle(if (byMotion) "录音上下文 · 活动由强到弱" else "录音上下文 · 时间顺序")
+            .setAdapter(adapter) { _, i ->
+                val item = sorted[i]
+                playVerified(File(file.parentFile, item.span.file), item.window.startMs, item.span)
+            }.setNeutralButton(if (byMotion) "按时间" else "按活动强度") { _, _ -> contextDialog(file, items, !byMotion) }
+            .setNegativeButton("关闭", null).show()
+    }
+
+    private fun playVerified(audio: File, offsetMs: Int, span: PlaybackSpan) {
+        Thread {
+            val verified = runCatching { audio.sha256() == span.hash }.getOrDefault(false)
+            runOnUiThread {
+                if (isDestroyed || isFinishing) return@runOnUiThread
+                if (verified) player.play(audio, offsetMs, span)
+                else status.text = "对应原音缺失或校验失败，请重新同步"
+            }
+        }.start()
     }
     private fun showMarks(file: File) {
         Thread {
@@ -125,9 +184,10 @@ class LibraryActivity : Activity() {
                     return@runOnUiThread
                 }
                 val clock = DateFormat.getDateTimeInstance(DateFormat.SHORT, DateFormat.MEDIUM)
+                val spans = runs.flatMap { it.spans }.associateBy { it.file }
                 val items = marks.map { (mark, position) ->
                     val where = when (position) {
-                        is MarkPosition.Audio -> "回听"
+                        is MarkPosition.Audio -> listOfNotNull("回听", spans[position.file]?.contextAt(position.offsetMs)?.description()).joinToString("\n")
                         MarkPosition.Omitted -> "此处静音已省略"
                         MarkPosition.Unknown -> "原音位置未知"
                     }
@@ -137,14 +197,7 @@ class LibraryActivity : Activity() {
                     .setItems(items.toTypedArray()) { _, i ->
                         val position = marks[i].second as? MarkPosition.Audio ?: return@setItems
                         val audio = File(file.parentFile, position.file)
-                        Thread {
-                            val verified = runCatching { audio.sha256() == position.hash }.getOrDefault(false)
-                            runOnUiThread play@{
-                                if (isDestroyed || isFinishing) return@play
-                                if (verified) player.play(audio, position.offsetMs)
-                                else status.text = "对应原音缺失或校验失败，请重新同步"
-                            }
-                        }.start()
+                        spans[position.file]?.takeIf { it.hash == position.hash }?.let { playVerified(audio, position.offsetMs, it) }
                     }.show()
             }
         }.start()

@@ -24,40 +24,25 @@ class AudioTransferSession(private val context: Context, private val diagnostics
             } }
         }
     }
-    private fun sendTimelines(output: DataOutputStream, entries: List<Pair<Segment, File>>, progress: TransferProgress) {
+    private fun sendTimelines(output: DataOutputStream, entries: List<Pair<Segment, File>>, includeContext: Boolean, progress: TransferProgress) {
         val sessions = entries.groupBy { it.first.session }
         output.writeInt(sessions.size)
         for ((id, segments) in sessions) {
             val catalog = segments.associate { it.first.name to it.first.hash }
             output.writeUTF(id)
             val journal = File(segments.first().second.parentFile, "events.jsonl")
-            journal.useLines { lines ->
-                val iterator = lines.iterator()
-                val projected = iterator.asSequence().mapNotNull { line ->
-                    // Do not parse large diagnostic/sensor payloads just to discard them.
-                    if (!timelineEvent.containsMatchIn(line)) return@mapNotNull null
-                    val event = try { JSONObject(line) } catch (e: org.json.JSONException) {
-                        // A writer can still be appending the last line during a live sync.
-                        if (iterator.hasNext()) throw e
-                        return@mapNotNull null
-                    }
-                    if (event.optString("event") == "segment_closed" &&
-                        catalog[event.optString("file")] != event.optString("sha256")) return@mapNotNull null
-                    TimelineJournal.project(event)?.toString()
-                }
-                TimelineTransfer.write(output, projected) { progress.advanced(0) }
-            }
+            writeTimelineSnapshot(output, journal, catalog, includeContext) { progress.advanced(0) }
         }
         output.flush()
     }
-    private val timelineEvent = Regex(""""event"\s*:\s*"(run_started|audio_configuration|quiet_gate|marker|segment_closed|run_stopped|error)"""")
 
     fun serve(channel: TransferChannel) {
         val timer = java.util.Timer(true)
         val progress = TransferProgress(android.os.SystemClock::elapsedRealtime)
-        val withTimeline = channel.path.startsWith("$TIMELINE_CHANNEL/")
+        val withContext = channel.path.startsWith("$CONTEXT_CHANNEL/")
+        val withTimeline = withContext || channel.path.startsWith("$TIMELINE_CHANNEL/")
         val withReceipts = withTimeline || channel.path.startsWith("$RECEIPTS_CHANNEL/")
-        val prefix = when { withTimeline -> TIMELINE_CHANNEL; withReceipts -> RECEIPTS_CHANNEL; else -> CHANNEL }
+        val prefix = when { withContext -> CONTEXT_CHANNEL; withTimeline -> TIMELINE_CHANNEL; withReceipts -> RECEIPTS_CHANNEL; else -> CHANNEL }
         val session = channel.path.removePrefix("$prefix/").takeIf {
             it.matches(Regex("[0-9a-f-]{36}"))
         }
@@ -97,7 +82,7 @@ class AudioTransferSession(private val context: Context, private val diagnostics
                 if (index == -1) {
                     if (withTimeline) {
                         progress.enter("timeline")
-                        sendTimelines(output, entries, progress)
+                        sendTimelines(output, entries, withContext, progress)
                         require(input.readBoolean()) { "时间轴未确认" }
                     }
                     output.writeBoolean(true)

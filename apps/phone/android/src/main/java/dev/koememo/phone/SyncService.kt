@@ -187,9 +187,11 @@ class SyncService : Service() {
         val client = Wearable.getChannelClient(this)
         checkActive()
         val withSession = capabilities[SESSION_CAPABILITY]?.nodes.orEmpty().any { it.id == watch.id }
-        val withTimeline = capabilities[TIMELINE_CAPABILITY]?.nodes.orEmpty().any { it.id == watch.id }
+        val withContext = capabilities[CONTEXT_CAPABILITY]?.nodes.orEmpty().any { it.id == watch.id }
+        val withTimeline = withContext || capabilities[TIMELINE_CAPABILITY]?.nodes.orEmpty().any { it.id == watch.id }
         val withReceipts = withTimeline || capabilities[RECEIPTS_CAPABILITY]?.nodes.orEmpty().any { it.id == watch.id }
         val path = when {
+            withContext -> "$CONTEXT_CHANNEL/$session"
             withTimeline -> "$TIMELINE_CHANNEL/$session"
             withReceipts -> "$RECEIPTS_CHANNEL/$session"
             withSession -> "$CHANNEL/$session"

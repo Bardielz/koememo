@@ -73,3 +73,6 @@ class TransferProgress(private val now: () -> Long) {
 
 const val TIMELINE_CAPABILITY = "koememo_audio_timeline_v1"
 const val TIMELINE_CHANNEL = "$CHANNEL/timeline-v1"
+
+const val CONTEXT_CAPABILITY = "koememo_audio_context_v1"
+const val CONTEXT_CHANNEL = "$CHANNEL/context-v1"

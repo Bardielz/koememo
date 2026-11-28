@@ -78,6 +78,7 @@ class TranscriptionActivity : Activity() {
         val matchingRun = timeline?.takeIf { run ->
             run.spans.any { it.file == file.name && it.hash == transcript.data.optString("sha256") }
         }
+        val span = matchingRun?.spans?.find { it.file == file.name }
         rows.removeAllViews()
         for (i in 0 until windows.length()) {
             val w = windows.getJSONObject(i)
@@ -87,7 +88,8 @@ class TranscriptionActivity : Activity() {
                 val recordedAt = matchingRun?.timeAt(file.name, start.toLong())
                 val time = recordedAt?.let { DateFormat.getTimeInstance(DateFormat.MEDIUM).format(java.util.Date(it)) }
                 this.text = listOfNotNull(time, "%d:%02d".format(start / 60000, start / 1000 % 60), text).joinToString("　")
-                setOnClickListener { player.play(file, start) }
+                span?.contextAt(start)?.let { append("\n" + it.description()) }
+                setOnClickListener { player.play(file, start, span) }
             })
         }
         status.text = when {

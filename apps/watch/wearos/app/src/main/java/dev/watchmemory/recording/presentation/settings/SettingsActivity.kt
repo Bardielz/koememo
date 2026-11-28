@@ -119,6 +119,7 @@ open class SettingsActivity : Activity() {
                     "心率需要授权。仅记录运动也可以继续录音。"
                 else -> "开启后随录音记录三轴加速度和心率。戴稳手表有助于获得有效心率。"
             })
+            label("与手机同步已保存的录音时，同时分享每 15 秒的活动和心率摘要。原始样本保存在手表。")
             optimization("reuse_ogg", "复用 Ogg 缓冲（Opus）", settings.selectedReuseOgg,
                 settings.selectedEncoding == RecordingEncoding.OPUS, settings::setReuseOgg)
             column.addView(Button(this).apply {
