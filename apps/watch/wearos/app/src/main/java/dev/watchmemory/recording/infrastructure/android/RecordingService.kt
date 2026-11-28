@@ -81,7 +81,7 @@ open class RecordingService : Service(), CaptureObserver {
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         when (intent?.action?.uppercase(java.util.Locale.ROOT)) {
             RecordingCommand.START.name -> if (!runtime.busy) begin()
-            RecordingCommand.MARK.name -> if (runtime.busy && stopReason == null) log("marker", mapOf("run_ms" to (SystemClock.elapsedRealtime() - runtime.startedAt)))
+            RecordingCommand.MARK.name -> if (runtime.busy && stopReason == null) log("marker", mapOf("marker_boottime_ns" to SystemClock.elapsedRealtimeNanos(), "run_ms" to (SystemClock.elapsedRealtime() - runtime.startedAt)))
             RecordingCommand.PAUSE.name -> if (runtime.busy) requestStop("已暂停") else stopSelf()
             RecordingCommand.FINISH.name -> {
                 ending = true

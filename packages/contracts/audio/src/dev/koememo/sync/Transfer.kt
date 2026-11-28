@@ -70,3 +70,6 @@ class TransferProgress(private val now: () -> Long) {
 
     fun expired(timeoutMs: Long) = now() - lastActivity >= timeoutMs
 }
+
+const val TIMELINE_CAPABILITY = "koememo_audio_timeline_v1"
+const val TIMELINE_CHANNEL = "$CHANNEL/timeline-v1"

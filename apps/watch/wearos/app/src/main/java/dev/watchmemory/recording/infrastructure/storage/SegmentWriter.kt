@@ -15,7 +15,7 @@ class SegmentWriter(
     private val prefix: String,
     private val segmentUs: Long = 300_000_000,
     private val sampleRate: Int = 16000,
-    private val onClosed: (String, Long, Long, Long, String) -> Unit
+    private val onClosed: (String, Long, Long, Long, String, Long, Long) -> Unit
 ) : RecordingWriter {
     private val rateIndex = when (sampleRate) {
         16000 -> 8
@@ -68,6 +68,6 @@ class SegmentWriter(
         buffered = null
         try { buffer.flush(); closing.fd.sync() } finally { closing.close() }
         val hash = digest.digest().joinToString("") { "%02x".format(it.toInt() and 255) }
-        onClosed(name, firstUs, lastUs, bytes, hash)
+        onClosed(name, firstUs, lastUs, bytes, hash, firstUs, lastUs + 1024L * 1_000_000 / sampleRate)
     }
 }

@@ -187,8 +187,10 @@ class SyncService : Service() {
         val client = Wearable.getChannelClient(this)
         checkActive()
         val withSession = capabilities[SESSION_CAPABILITY]?.nodes.orEmpty().any { it.id == watch.id }
-        val withReceipts = capabilities[RECEIPTS_CAPABILITY]?.nodes.orEmpty().any { it.id == watch.id }
+        val withTimeline = capabilities[TIMELINE_CAPABILITY]?.nodes.orEmpty().any { it.id == watch.id }
+        val withReceipts = withTimeline || capabilities[RECEIPTS_CAPABILITY]?.nodes.orEmpty().any { it.id == watch.id }
         val path = when {
+            withTimeline -> "$TIMELINE_CHANNEL/$session"
             withReceipts -> "$RECEIPTS_CHANNEL/$session"
             withSession -> "$CHANNEL/$session"
             else -> CHANNEL
@@ -276,6 +278,22 @@ class SyncService : Service() {
                 lastRequest = android.os.SystemClock.elapsedRealtime()
             }
             output.writeInt(-1); output.flush()
+            if (withTimeline) {
+                enter("timeline")
+                val remaining = entries.mapTo(mutableSetOf()) { it.item.session }
+                require(input.readInt() == remaining.size)
+                repeat(remaining.size) {
+                    checkActive()
+                    val id = input.readUTF()
+                    require(remaining.remove(id))
+                    TimelineTransfer.receive(input, File(nodeDirectory, id)) {
+                        checkActive()
+                        progress.advanced(0)
+                    }
+                }
+                output.writeBoolean(true)
+                output.flush()
+            }
             check(input.readBoolean()) { "手表未确认完成，请重试" }
             enter("completed")
             Log.i("KoeMemoSync", "session=$session reused_receipts=$reused count=$count")

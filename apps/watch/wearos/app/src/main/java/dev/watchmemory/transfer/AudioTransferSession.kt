@@ -24,11 +24,35 @@ class AudioTransferSession(private val context: Context, private val diagnostics
             } }
         }
     }
+    private fun sendTimelines(output: DataOutputStream, entries: List<Pair<Segment, File>>, progress: TransferProgress) {
+        val sessions = entries.groupBy { it.first.session }
+        output.writeInt(sessions.size)
+        for ((id, segments) in sessions) {
+            val catalog = segments.associate { it.first.name to it.first.hash }
+            output.writeUTF(id)
+            val journal = File(segments.first().second.parentFile, "events.jsonl")
+            journal.useLines { lines ->
+                val projected = lines.mapNotNull { line ->
+                    // Do not parse large diagnostic/sensor payloads just to discard them.
+                    if (!timelineEvent.containsMatchIn(line)) return@mapNotNull null
+                    val event = JSONObject(line)
+                    if (event.optString("event") == "segment_closed" &&
+                        catalog[event.optString("file")] != event.optString("sha256")) return@mapNotNull null
+                    TimelineJournal.project(event)?.toString()
+                }
+                TimelineTransfer.write(output, projected) { progress.advanced(0) }
+            }
+        }
+        output.flush()
+    }
+    private val timelineEvent = Regex(""""event"\s*:\s*"(run_started|audio_configuration|quiet_gate|marker|segment_closed|run_stopped|error)"""")
+
     fun serve(channel: TransferChannel) {
         val timer = java.util.Timer(true)
         val progress = TransferProgress(android.os.SystemClock::elapsedRealtime)
-        val withReceipts = channel.path.startsWith("$RECEIPTS_CHANNEL/")
-        val prefix = if (withReceipts) RECEIPTS_CHANNEL else CHANNEL
+        val withTimeline = channel.path.startsWith("$TIMELINE_CHANNEL/")
+        val withReceipts = withTimeline || channel.path.startsWith("$RECEIPTS_CHANNEL/")
+        val prefix = when { withTimeline -> TIMELINE_CHANNEL; withReceipts -> RECEIPTS_CHANNEL; else -> CHANNEL }
         val session = channel.path.removePrefix("$prefix/").takeIf {
             it.matches(Regex("[0-9a-f-]{36}"))
         }
@@ -65,7 +89,16 @@ class AudioTransferSession(private val context: Context, private val diagnostics
                 metrics?.enter("request")
                 progress.enter("request")
                 val index = input.readInt()
-                if (index == -1) { output.writeBoolean(true); output.flush(); break }
+                if (index == -1) {
+                    if (withTimeline) {
+                        progress.enter("timeline")
+                        sendTimelines(output, entries, progress)
+                        require(input.readBoolean()) { "时间轴未确认" }
+                    }
+                    output.writeBoolean(true)
+                    output.flush()
+                    break
+                }
                 val (entry,file) = entries[index]
                 val offset = input.readLong()
                 require(offset in 0..entry.size)
