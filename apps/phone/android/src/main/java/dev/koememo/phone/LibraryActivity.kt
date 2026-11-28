@@ -1,146 +1,336 @@
 package dev.koememo.phone
 
 import android.app.Activity
-import android.os.Bundle
-import android.widget.*
+import android.app.AlertDialog
 import android.content.Intent
 import android.content.SharedPreferences
+import android.os.Bundle
+import android.view.Gravity
+import android.view.MenuItem
 import android.view.View
 import android.view.ViewGroup
-import dev.koememo.sync.MarkPosition
+import android.widget.*
 import dev.koememo.sync.ContextWindow
+import dev.koememo.sync.MarkPosition
 import dev.koememo.sync.PlaybackSpan
-import dev.koememo.sync.sessionTimeline
+import dev.koememo.sync.TimelineJournal
 import dev.koememo.sync.sha256
+import java.io.File
 import java.text.DateFormat
-import java.io.*
+import java.text.SimpleDateFormat
+import java.util.Date
+import java.util.Locale
+import java.util.concurrent.Executors
 
 class LibraryActivity : Activity() {
+    private val root get() = File(filesDir, "audio")
     private val syncState by lazy { getSharedPreferences("sync_state", MODE_PRIVATE) }
-    private val syncListener = SharedPreferences.OnSharedPreferenceChangeListener { _, _ -> renderSync() }
-    private lateinit var pause: Button
-    private lateinit var status: TextView
-    private lateinit var libraryHint: TextView
-    private var loadGeneration = 0
-    private lateinit var list: ListView
+    private val syncListener = SharedPreferences.OnSharedPreferenceChangeListener { _, key ->
+        if (directory == null) renderSync()
+        if (key == "active" && !SyncService.running) refresh()
+    }
+    private val io = Executors.newSingleThreadExecutor()
+    private var directory: File? = null
+    private var generation = 0
+    private var playRequest = 0
+    private var returningFromSession = false
+    private var all = emptyList<BrowserRow>()
+    private var shown = emptyList<BrowserRow>()
+    private var hashes = emptyMap<String, String>()
+    private var spans = emptyMap<String, PlaybackSpan>()
+    private var orderByGroup = false
+    private var loadedDirectoryStamp: Long? = null
     private var exporting: File? = null
-    private lateinit var sync: Button
+    private var anchorPath: String? = null
+    private var anchorTop = 0
+    private lateinit var status: TextView
+    private lateinit var heading: TextView
+    private lateinit var syncAction: MenuItem
+    private lateinit var pausePending: MenuItem
+    private lateinit var search: SearchView
     private lateinit var player: RecordingPlayer
-    private val root get() = File(filesDir,"audio")
-    private var selectedDirectory: File? = null
+    private lateinit var list: ListView
+    private lateinit var empty: TextView
+    private val adapter = Rows()
+
     override fun onCreate(state: Bundle?) {
         super.onCreate(state)
         intent.getStringExtra("segments")?.let {
             val dir = File(it).canonicalFile
             if (!dir.toPath().startsWith(root.canonicalFile.toPath()) || !dir.isDirectory) { finish(); return }
-            selectedDirectory = dir
+            directory = dir
         }
-        val layout = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
+        exporting = state?.getString("exportFile")?.let(::File)
+        anchorPath = state?.getString("anchor")
+        anchorTop = state?.getInt("top") ?: 0
+        orderByGroup = state?.getBoolean("orderByGroup") ?: false
+        returningFromSession = state?.getBoolean("returningFromSession") ?: false
+
+        val layout = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; isFocusableInTouchMode = true }
         layout.setOnApplyWindowInsetsListener { view, insets ->
-            val safe = insets.getInsets(android.view.WindowInsets.Type.systemBars() or android.view.WindowInsets.Type.displayCutout())
+            val safe = insets.getInsets(android.view.WindowInsets.Type.systemBars() or android.view.WindowInsets.Type.displayCutout() or android.view.WindowInsets.Type.ime())
             view.setPadding(safe.left, safe.top, safe.right, safe.bottom)
             insets
         }
-        layout.addView(TextView(this).apply { text = "KoeMemo"; textSize = 22f })
-        status = TextView(this); sync = Button(this).apply { text = "从手表同步"; setOnClickListener {
-            startForegroundService(Intent(this@LibraryActivity, SyncService::class.java))
-            if (android.os.Build.VERSION.SDK_INT >= 33 && checkSelfPermission(android.Manifest.permission.POST_NOTIFICATIONS) != android.content.pm.PackageManager.PERMISSION_GRANTED) {
-                requestPermissions(arrayOf(android.Manifest.permission.POST_NOTIFICATIONS), 2)
-            }
-        } }
-        layout.addView(Button(this).apply { text = "实验功能"; setOnClickListener { PhoneExperiments.show(this@LibraryActivity) } })
-        layout.addView(sync)
-        pause = Button(this).apply { text = "暂停同步"; setOnClickListener {
-            startService(Intent(this@LibraryActivity, SyncService::class.java).setAction(SyncService.PAUSE))
-        } }
-        layout.addView(pause)
+        val dir = directory
+        val toolbar = navigationBar(dir?.let(::sessionTitle) ?: "录音库", dir != null)
+        layout.addView(toolbar)
+        if (dir == null) {
+            syncAction = toolbar.action("从手表同步", true) { if (SyncService.running) pauseSync() else startSync() }
+            pausePending = toolbar.action("暂停待恢复的同步") { pauseSync() }
+            toolbar.action("实验功能") { PhoneExperiments.show(this) }
+        } else {
+            toolbar.action("文字稿", true) { openTranscript(dir) }
+            toolbar.action("本次录音的标记") { showMarks(dir) }
+            toolbar.action("录音上下文") { showContext(dir) }
+            toolbar.action("录制详情") { showDetails(dir) }
+        }
+        search = SearchView(this).apply {
+            isIconifiedByDefault = false
+            queryHint = if (dir == null) "按会话日期或名称查找" else "按时间、片段号或文件名查找"
+            setQuery(state?.getString("query").orEmpty(), false)
+        }
+        layout.addView(search)
+        status = TextView(this).apply {
+            setPadding(dp(16), dp(4), dp(16), dp(4))
+            visibility = View.GONE
+        }
         layout.addView(status)
+        val tools = LinearLayout(this).apply { gravity = Gravity.CENTER_VERTICAL; setPadding(dp(16), 0, dp(8), 0) }
+        heading = TextView(this).apply { text = if (dir == null) "录音会话" else "录音片段"; textSize = 16f }
+        tools.addView(heading, LinearLayout.LayoutParams(0, -2, 1f))
+        if (dir != null) {
+            val sort = Button(this, null, android.R.attr.borderlessButtonStyle).apply {
+                text = orderLabel()
+                setOnClickListener { view ->
+                    PopupMenu(this@LibraryActivity, view).apply {
+                        menu.add("最近存入在前").setOnMenuItemClickListener { changeOrder(false, view as Button); true }
+                        menu.add("按录制轮次和片段").setOnMenuItemClickListener { changeOrder(true, view as Button); true }
+                    }.show()
+                }
+            }
+            tools.addView(sort)
+        }
+        layout.addView(tools)
+        list = ListView(this).apply {
+            adapter = this@LibraryActivity.adapter
+            isFastScrollEnabled = true
+            itemsCanFocus = true
+        }
+        empty = TextView(this).apply { gravity = Gravity.CENTER; text = "正在读取录音…" }
+        val body = FrameLayout(this).apply { addView(list); addView(empty) }
+        list.emptyView = empty
+        layout.addView(body, LinearLayout.LayoutParams(-1, 0, 1f))
         player = RecordingPlayer(this)
         layout.addView(player)
-        libraryHint = TextView(this).apply { text = "正在读取本地录音…" }
-        layout.addView(libraryHint)
-        exporting = state?.getString("exportFile")?.let(::File)
-        list = ListView(this)
-        layout.addView(list); setContentView(layout)
+        search.setOnQueryTextListener(object : SearchView.OnQueryTextListener {
+            override fun onQueryTextSubmit(query: String?): Boolean { search.clearFocus(); return true }
+            override fun onQueryTextChange(newText: String?): Boolean { filter(reset = true); return true }
+        })
+        setContentView(layout)
+        layout.requestFocus()
+    }
+
+    private fun orderLabel() = if (orderByGroup) "按录制轮次 ▾" else "最近存入 ▾"
+    private fun changeOrder(group: Boolean, button: Button) {
+        if (group == orderByGroup) return
+        orderByGroup = group
+        button.text = orderLabel()
+        filter(reset = true)
+    }
+
+    private fun startSync() {
+        startForegroundService(Intent(this, SyncService::class.java))
+        if (android.os.Build.VERSION.SDK_INT >= 33 && checkSelfPermission(android.Manifest.permission.POST_NOTIFICATIONS) != android.content.pm.PackageManager.PERMISSION_GRANTED)
+            requestPermissions(arrayOf(android.Manifest.permission.POST_NOTIFICATIONS), 2)
+    }
+    private fun pauseSync() = startService(Intent(this, SyncService::class.java).setAction(SyncService.PAUSE))
+    private fun renderSync() {
+        val running = SyncService.running
+        val pending = syncState.contains(SyncService.PENDING)
+        syncAction.title = when { running -> "暂停同步"; pending -> "重试同步"; else -> "从手表同步" }
+        pausePending.isVisible = pending && !running
+        val saved = syncState.getString("status", "").orEmpty()
+        message(if (!running && syncState.getBoolean("active", false)) "同步已中断，可继续同步" else saved)
+    }
+    private fun message(value: String) {
+        status.text = value
+        status.visibility = if (value.isBlank()) View.GONE else View.VISIBLE
     }
     override fun onStart() {
         super.onStart()
         if (isFinishing) return
         player.resumeUpdates()
         syncState.registerOnSharedPreferenceChangeListener(syncListener)
-        if (!SyncService.running && syncState.contains(SyncService.PENDING)) {
-            startForegroundService(Intent(this, SyncService::class.java).setAction(SyncService.RESUME))
+        if (directory == null) {
+            if (!returningFromSession && !SyncService.running && syncState.contains(SyncService.PENDING))
+                startForegroundService(Intent(this, SyncService::class.java).setAction(SyncService.RESUME))
+            returningFromSession = false
+            renderSync()
         }
-        renderSync()
-        if (SyncService.running) refresh()
+        refresh()
     }
     override fun onStop() {
+        playRequest++
         if (::player.isInitialized) player.suspendUpdates()
         syncState.unregisterOnSharedPreferenceChangeListener(syncListener)
         super.onStop()
     }
-    private fun renderSync() {
-        val running = SyncService.running
-        val saved = syncState.getString("status", "").orEmpty()
-        status.text = if (!running && syncState.getBoolean("active", false)) "同步已中断，可继续同步" else saved
-        sync.isEnabled = !running
-        pause.isEnabled = running || syncState.contains(SyncService.PENDING)
-        if (!running) refresh()
+    override fun onDestroy() {
+        io.shutdownNow()
+        if (::player.isInitialized) player.release()
+        super.onDestroy()
     }
-    override fun onDestroy() { if (::player.isInitialized) player.release(); super.onDestroy() }
+
     private fun refresh() {
-        val generation = ++loadGeneration
-        Thread {
-            val result = runCatching { selectedDirectory?.let(::localSegments)
-                ?: root.walkTopDown().filter { it.isAudioSegment() || it.name == SyncCatalog.FILE }.toList() }
-            runOnUiThread {
-                if (generation != loadGeneration || isFinishing || isDestroyed) return@runOnUiThread
-                result.onSuccess { showFiles(it) }.onFailure { libraryHint.text = "读取录音失败：" + it.javaClass.simpleName }
-            }
-        }.start()
-    }
-    private fun showFiles(files: List<File>) {
-        if (selectedDirectory == null) {
-            val sessions = files.groupBy { it.parentFile!! }.entries.sortedByDescending { it.key.name }
-            libraryHint.text = if (sessions.isEmpty()) "手机上还没有录音，点「从手表同步」开始。" else "录音会话（${sessions.size}）"
-            list.adapter = ArrayAdapter(this, android.R.layout.simple_list_item_1, sessions.map {
-                "${it.key.name}　${it.value.count { f -> f.name != SyncCatalog.FILE }} 个本地片段"
-            })
-            list.setOnItemClickListener { _, _, index, _ ->
-                startActivity(Intent(this, TranscriptionActivity::class.java).putExtra("path", sessions[index].key.path))
-            }
-            return
-        }
-        libraryHint.text = if (files.isEmpty()) "手机上还没有录音，点「从手表同步」开始。" else "本地录音（${files.size}）"
-        list.adapter = ArrayAdapter(this, android.R.layout.simple_list_item_1, files.map { it.parentFile!!.name + "/" + it.name })
-        list.setOnItemClickListener { _, _, index, _ ->
-            val file = files[index]
-            android.app.AlertDialog.Builder(this).setTitle(file.name).setItems(arrayOf("播放", "导出", "本地转写", "本次录音的标记", "录音上下文")) { _, choice ->
-                if (choice == 0) {
-                    player.play(file)
-                } else if (choice == 2) {
-                    startActivity(Intent(this, TranscriptionActivity::class.java).putExtra("path", file.path))
-                } else if (choice == 3) {
-                    showMarks(file)
-                } else if (choice == 4) {
-                    showContext(file)
+        val request = ++generation
+        val dir = directory
+        val previousStamp = loadedDirectoryStamp
+        io.execute {
+            try {
+                val stamp = dir?.lastModified()
+                if (stamp != null && stamp > 0 && stamp == previousStamp) return@execute
+                var expected = emptyMap<String, String>()
+                var mapped = emptyMap<String, PlaybackSpan>()
+                val rows = if (dir == null) {
+                    root.walkTopDown().filter { it.isAudioSegment() || it.name == SyncCatalog.FILE }
+                        .groupBy { it.parentFile!! }.map { (session, files) -> sessionRow(session, files.count { it.name != SyncCatalog.FILE }) }
+                        .sortedWith(compareByDescending<BrowserRow> { it.keywords }.thenBy { it.file.path })
                 } else {
-                    exporting = file
-                    startActivityForResult(android.content.Intent(android.content.Intent.ACTION_CREATE_DOCUMENT).apply {
-                        addCategory(android.content.Intent.CATEGORY_OPENABLE)
-                        type = if (file.extension == "ogg") "audio/ogg" else "audio/aac"
-                        putExtra(android.content.Intent.EXTRA_TITLE, file.name)
-                    }, 1)
+                    val hasTimeline = File(dir, TimelineJournal.FILE).isFile
+                    val session = if (hasTimeline) AudioSession.load(dir) else null
+                    val clips = session?.clips.orEmpty()
+                    val catalog = session?.catalog ?: runCatching { SyncCatalog.read(dir) }.getOrNull()
+                    val clock = SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.ROOT)
+                    expected = session?.runs.orEmpty().flatMap { it.spans }.associate { it.file to it.hash } + catalog?.hashes.orEmpty()
+                    mapped = session?.mapped.orEmpty().associate { it.file.name to it.span!! }
+                    val byFile = clips.associateBy { it.file }
+                    val files = session?.clips?.map { it.file } ?: localSegments(dir)
+                    files.map { file ->
+                        val clip = byFile[file]
+                        val wall = clip?.span?.takeUnless { clip.hashMismatch }?.let { clip.run?.timeAt(it.file, 0) }
+                        val modified = file.lastModified()
+                        segmentRow(file, modified, clock.format(Date(modified)), wall?.let { clock.format(Date(it)) })
+                    }
                 }
-            }.show()
+                runOnUiThread {
+                    if (request != generation || isFinishing || isDestroyed) return@runOnUiThread
+                    all = rows; hashes = expected; spans = mapped
+                    loadedDirectoryStamp = stamp
+                    filter(reset = false)
+                }
+            } catch (e: Exception) {
+                runOnUiThread { if (request == generation && !isDestroyed) { empty.text = "读取录音失败"; message(e.localizedMessage.orEmpty()) } }
+            }
+        }
+    }
+    private fun filter(reset: Boolean) {
+        val term = search.query.toString().trim().lowercase(Locale.ROOT)
+        val pos = if (reset) null else anchorPath ?: shown.getOrNull(list.firstVisiblePosition)?.file?.path
+        val top = if (anchorPath != null) anchorTop else list.getChildAt(0)?.top ?: 0
+        val matches = if (term.isEmpty()) all else all.filter { it.matches(term) }
+        shown = if (directory == null || orderByGroup) matches
+            else matches.sortedWith(compareByDescending<BrowserRow> { it.storedMs }.thenByDescending { it.file.name })
+        heading.text = (if (directory == null) "录音会话" else "录音片段") + "  ·  ${shown.size}"
+        empty.text = when {
+            term.isNotEmpty() -> "没有匹配的录音"
+            directory != null -> "这次会话还没有已同步的片段"
+            else -> "手机上还没有录音，点「从手表同步」获取。"
+        }
+        adapter.notifyDataSetChanged()
+        val index = shown.indexOfFirst { it.file.path == pos }
+        if (index >= 0) list.setSelectionFromTop(index, top) else if (reset) list.setSelection(0)
+        if (all.isNotEmpty() || reset) anchorPath = null
+    }
+
+    private inner class RowView : LinearLayout(this@LibraryActivity) {
+        val main = LinearLayout(context).apply {
+            orientation = LinearLayout.VERTICAL
+            gravity = Gravity.CENTER_VERTICAL
+            setPadding(dp(16), dp(10), dp(4), dp(10))
+            isFocusable = true
+        }
+        val title = TextView(context).apply { textSize = 17f; setTextColor(android.graphics.Color.rgb(25, 37, 40)) }
+        val detail = TextView(context).apply { textSize = 13f }
+        val more = ImageButton(context, null, android.R.attr.borderlessButtonStyle).apply { setImageResource(R.drawable.ic_more) }
+        init {
+            gravity = Gravity.CENTER_VERTICAL
+            minimumHeight = dp(64)
+            val attr = android.util.TypedValue()
+            context.theme.resolveAttribute(android.R.attr.selectableItemBackground, attr, true)
+            main.setBackgroundResource(attr.resourceId)
+            main.addView(title); main.addView(detail)
+            addView(main, LayoutParams(0, -2, 1f))
+            if (directory != null) addView(more, LayoutParams(dp(52), dp(52)))
+        }
+    }
+    private inner class Rows : BaseAdapter() {
+        override fun getCount() = shown.size
+        override fun getItem(position: Int) = shown[position]
+        override fun getItemId(position: Int) = position.toLong()
+        override fun getView(position: Int, convertView: View?, parent: ViewGroup): View {
+            val row = convertView as? RowView ?: RowView()
+            val item = getItem(position)
+            row.title.text = item.title
+            row.detail.text = item.subtitle
+            row.main.contentDescription = "${item.title}，${item.subtitle}"
+            row.main.setOnClickListener {
+                search.clearFocus()
+                if (directory == null) {
+                    returningFromSession = true
+                    startActivity(Intent(this@LibraryActivity, LibraryActivity::class.java).putExtra("segments", item.file.path))
+                } else playSegment(item.file)
+            }
+            if (directory != null) {
+                row.more.contentDescription = "${item.title}的更多操作"
+                row.more.setOnClickListener { anchor ->
+                    PopupMenu(this@LibraryActivity, anchor).apply {
+                        menu.add("本段文字稿").setOnMenuItemClickListener { openTranscript(item.file); true }
+                        menu.add("导出音频").setOnMenuItemClickListener { export(item.file); true }
+                    }.show()
+                }
+            }
+            return row
+        }
+    }
+    private fun playSegment(file: File) {
+        val span = spans[file.name]
+        val hash = hashes[file.name] ?: span?.hash
+        if (hash == null) {
+            playRequest++
+            player.play(file)
+        } else playVerified(file, 0, span, hash)
+    }
+    private fun openTranscript(target: File) {
+        search.clearFocus()
+        playRequest++
+        player.release()
+        player.visibility = View.GONE
+        startActivity(Intent(this, TranscriptionActivity::class.java).putExtra("path", target.path))
+    }
+    private fun export(file: File) {
+        exporting = file
+        startActivityForResult(Intent(Intent.ACTION_CREATE_DOCUMENT).apply {
+            addCategory(Intent.CATEGORY_OPENABLE)
+            type = if (file.extension == "ogg") "audio/ogg" else "audio/aac"
+            putExtra(Intent.EXTRA_TITLE, file.name)
+        }, 1)
+    }
+    private fun showDetails(dir: File) {
+        io.execute {
+            val result = runCatching { describeSession(dir, AudioSession.load(dir)) }
+            runOnUiThread {
+                if (!isDestroyed && !isFinishing) AlertDialog.Builder(this).setTitle("录制详情")
+                    .setMessage(result.getOrElse { "无法读取录制详情" }).setPositiveButton("关闭", null).show()
+            }
         }
     }
     private data class ContextItem(val span: PlaybackSpan, val window: ContextWindow, val time: Long?)
 
-    private fun showContext(file: File) {
+    private fun showContext(dir: File) {
         Thread {
             val result = runCatching {
-                sessionTimeline(file).flatMap { run ->
+                directoryTimeline(dir).flatMap { run ->
                     run.spans.flatMap { span -> span.windows.values.map { window ->
                         ContextItem(span, window, run.timeAt(span.file, window.startMs.toLong()))
                     } }
@@ -148,14 +338,14 @@ class LibraryActivity : Activity() {
             }
             runOnUiThread {
                 if (isDestroyed || isFinishing) return@runOnUiThread
-                val items = result.getOrElse { status.text = "无法读取录音上下文"; return@runOnUiThread }
-                if (items.isEmpty()) status.text = "此会话暂无上下文。开启手表的运动和心率实验并同步后可在此查看。"
-                else contextDialog(file, items, false)
+                val items = result.getOrElse { message("无法读取录音上下文"); return@runOnUiThread }
+                if (items.isEmpty()) message("这次会话暂无运动或心率数据")
+                else contextDialog(dir, items, false)
             }
         }.start()
     }
 
-    private fun contextDialog(file: File, items: List<ContextItem>, byMotion: Boolean) {
+    private fun contextDialog(dir: File, items: List<ContextItem>, byMotion: Boolean) {
         val sorted = if (byMotion) items.sortedByDescending { it.window.meanMotion } else items
         val clock = DateFormat.getTimeInstance(DateFormat.MEDIUM)
         val adapter = object : ArrayAdapter<ContextItem>(this, android.R.layout.simple_list_item_1, sorted) {
@@ -173,33 +363,34 @@ class LibraryActivity : Activity() {
         android.app.AlertDialog.Builder(this).setTitle(if (byMotion) "录音上下文 · 活动由强到弱" else "录音上下文 · 时间顺序")
             .setAdapter(adapter) { _, i ->
                 val item = sorted[i]
-                playVerified(File(file.parentFile, item.span.file), item.window.startMs, item.span)
-            }.setNeutralButton(if (byMotion) "按时间" else "按活动强度") { _, _ -> contextDialog(file, items, !byMotion) }
+                playVerified(File(dir, item.span.file), item.window.startMs, item.span, item.span.hash)
+            }.setNeutralButton(if (byMotion) "按时间" else "按活动强度") { _, _ -> contextDialog(dir, items, !byMotion) }
             .setNegativeButton("关闭", null).show()
     }
 
-    private fun playVerified(audio: File, offsetMs: Int, span: PlaybackSpan) {
+    private fun playVerified(audio: File, offsetMs: Int, span: PlaybackSpan?, expected: String) {
+        val request = ++playRequest
         Thread {
-            val verified = runCatching { audio.sha256() == span.hash }.getOrDefault(false)
+            val verified = runCatching { audio.sha256() == expected }.getOrDefault(false)
             runOnUiThread {
-                if (isDestroyed || isFinishing) return@runOnUiThread
+                if (isDestroyed || isFinishing || request != playRequest) return@runOnUiThread
                 if (verified) player.play(audio, offsetMs, span)
-                else status.text = "对应原音缺失或校验失败，请重新同步"
+                else message("对应原音缺失或校验失败，请重新同步")
             }
         }.start()
     }
-    private fun showMarks(file: File) {
+    private fun showMarks(dir: File) {
         Thread {
-            val result = runCatching { sessionTimeline(file) }
+            val result = runCatching { directoryTimeline(dir) }
             runOnUiThread {
                 if (isDestroyed || isFinishing) return@runOnUiThread
                 val runs = result.getOrElse {
-                    status.text = "无法读取本次录音的时间轴"
+                    message("无法读取本次录音的时间轴")
                     return@runOnUiThread
                 }
                 val marks = runs.flatMap { run -> run.marks.map { mark -> mark to run.locate(mark) } }
                 if (marks.isEmpty()) {
-                    status.text = if (runs.isEmpty()) "这次录音尚无可用时间轴" else "本次录音没有标记"
+                    message(if (runs.isEmpty()) "这次录音尚无可用时间轴" else "本次录音没有标记")
                     return@runOnUiThread
                 }
                 val clock = DateFormat.getDateTimeInstance(DateFormat.SHORT, DateFormat.MEDIUM)
@@ -215,14 +406,20 @@ class LibraryActivity : Activity() {
                 android.app.AlertDialog.Builder(this).setTitle("本次录音的标记")
                     .setItems(items.toTypedArray()) { _, i ->
                         val position = marks[i].second as? MarkPosition.Audio ?: return@setItems
-                        val audio = File(file.parentFile, position.file)
-                        spans[position.file]?.takeIf { it.hash == position.hash }?.let { playVerified(audio, position.offsetMs, it) }
+                        val audio = File(dir, position.file)
+                        spans[position.file]?.takeIf { it.hash == position.hash }?.let { playVerified(audio, position.offsetMs, it, it.hash) }
                     }.show()
             }
         }.start()
     }
     override fun onSaveInstanceState(state: Bundle) {
         super.onSaveInstanceState(state)
+        if (!::list.isInitialized) return
+        state.putString("query", search.query.toString())
+        state.putString("anchor", shown.getOrNull(list.firstVisiblePosition)?.file?.path ?: anchorPath)
+        state.putInt("top", list.getChildAt(0)?.top ?: anchorTop)
+        state.putBoolean("orderByGroup", orderByGroup)
+        state.putBoolean("returningFromSession", returningFromSession)
         state.putString("exportFile", exporting?.path)
     }
     @Deprecated("Uses platform document picker")
@@ -236,7 +433,7 @@ class LibraryActivity : Activity() {
                 requireNotNull(contentResolver.openOutputStream(uri)).use { dest -> file.inputStream().use { it.copyTo(dest) } }
                 "已导出 " + file.name
             }.getOrElse { "导出失败：" + it.message }
-            runOnUiThread { status.text = message }
+            runOnUiThread { message(message) }
         }.start()
     }
 }

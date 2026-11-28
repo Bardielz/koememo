@@ -21,7 +21,6 @@ import java.util.concurrent.Executors
 
 class TranscriptionActivity : Activity() {
     private lateinit var target: File
-    private lateinit var info: TextView
     private lateinit var status: TextView
     private lateinit var action: Button
     private lateinit var search: EditText
@@ -61,25 +60,23 @@ class TranscriptionActivity : Activity() {
             val safe = insets.getInsets(android.view.WindowInsets.Type.systemBars() or android.view.WindowInsets.Type.ime())
             view.setPadding(safe.left, safe.top, safe.right, safe.bottom); insets
         }
-        info = TextView(this).apply { text = target.name }
+        layout.addView(navigationBar(if (target.isDirectory) "整场文字稿" else "本段文字稿", back = true).apply {
+            subtitle = if (target.isDirectory) sessionTitle(target) else target.name
+        })
         status = TextView(this)
         action = Button(this).apply { setOnClickListener { toggle() } }
         search = EditText(this).apply { setSingleLine(); hint = "搜索文字稿"; setText(state?.getString("query").orEmpty()) }
-        layout.addView(info)
-        if (target.isDirectory) layout.addView(Button(this).apply {
-            text = "片段、标记与导出"
-            setOnClickListener { startActivity(Intent(this@TranscriptionActivity, LibraryActivity::class.java).putExtra("segments", target.path)) }
-        })
         layout.addView(action); layout.addView(status)
         player = RecordingPlayer(this)
-        layout.addView(player); layout.addView(search)
+        layout.addView(search)
         val list = ListView(this).apply {
             transcriptMode = AbsListView.TRANSCRIPT_MODE_NORMAL
             adapter = this@TranscriptionActivity.adapter
             setOnItemClickListener { _, _, index, _ -> play(shown[index]) }
             setOnItemLongClickListener { _, _, index, _ -> edit(shown[index]); true }
         }
-        layout.addView(list)
+        layout.addView(list, LinearLayout.LayoutParams(-1, 0, 1f))
+        layout.addView(player)
         search.addTextChangedListener(object : TextWatcher {
             override fun beforeTextChanged(s: CharSequence?, start: Int, count: Int, after: Int) {}
             override fun onTextChanged(s: CharSequence?, start: Int, before: Int, count: Int) = filter()
@@ -126,14 +123,12 @@ class TranscriptionActivity : Activity() {
                     (changedFile == null || it.hash == changedHash) }
                 val result = selected.associate { clip -> clip.file to try { readPage(clip) }
                     catch (e: Exception) { Page(false, emptyList(), "${clip.file.name} · ${e.localizedMessage}") } }
-                val summary = if (changedFile == null) describe(session) else null
                 ui {
                     val previousSize = pages[changedFile]?.lines?.size ?: 0
                     val redraw = changedFile == null || result.any { (file, page) -> pages[file]?.lines != page.lines }
                     if (changedFile == null) pages.clear()
                     pages.putAll(result)
                     if (changedFile != null) animate = pages[changedFile]?.lines?.takeIf { it.size > previousSize }?.lastOrNull()
-                    if (summary != null) info.text = summary
                     ready = true
                     if (redraw) filter()
                     controls()
@@ -164,32 +159,6 @@ class TranscriptionActivity : Activity() {
         }
         return Page(data.optBoolean("complete"), lines)
     }
-    private fun describe(session: AudioSession): String {
-        if (!target.isDirectory) return target.name
-        val runs = session.runs
-        val clock = DateFormat.getDateTimeInstance(DateFormat.SHORT, DateFormat.MEDIUM)
-        val sync = session.catalog?.let {
-            "手表清单（${clock.format(Date(it.observedMs))}）已同步 ${session.received}/${it.hashes.size} 段"
-        } ?: "本机 ${session.clips.size} 段，手表清单总数未知"
-        if (runs.isEmpty()) {
-            val why = if (session.timelineError) "时间轴读取失败" else "没有时间轴"
-            return "${target.name}\n$sync\n$why，录制起止、静音省略和缺口未知"
-        }
-        val start = clock.format(Date(runs.first().wallMs))
-        val end = runs.last().endWallMs?.let { clock.format(Date(it)) } ?: "结束时刻未知"
-        val unknown = session.uncoveredUs?.let(::audioDuration) ?: "未知"
-        val local = "本机 ${session.clips.size} 段，时间轴与哈希匹配 ${session.mapped.size} 段"
-        val coverage = "已匹配音频约 ${audioDuration(session.mappedUs)} · 已知省略 ${audioDuration(session.omittedUs)}"
-        val missing = if (session.missing > 0) " · 快照中另有 ${session.missing} 段缺文件" else ""
-        val errors = runs.count { it.endEvent == "error" }
-        val mismatches = session.clips.count { it.hashMismatch }
-        return listOf("$start 至 $end · ${runs.size} 轮", sync, local + missing, coverage,
-            "采集轮次内未覆盖　$unknown" + (if (errors > 0) " · 录制错误 ${errors} 轮" else "") +
-                (if (mismatches > 0) " · $mismatches 段校验失败" else "")).joinToString("\n")
-    }
-    private fun duration(seconds: Long) = "%d:%02d:%02d".format(seconds / 3600, seconds / 60 % 60, seconds % 60)
-    private fun audioDuration(us: Long) = if (us in 1..999_999) "不足 1 秒" else duration(us / 1_000_000)
-
     private fun filter() {
         val term = search.text.toString().trim()
         shown = pages.values.flatMap { it.lines }.filter { it.text.contains(term, ignoreCase = true) }
