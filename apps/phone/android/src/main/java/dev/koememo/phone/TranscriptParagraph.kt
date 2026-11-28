@@ -19,7 +19,7 @@ internal fun transcriptLines(context: Context, clip: SessionClip, choice: AsrCho
         for (i in 0 until windows.length()) {
             val row = windows.getJSONObject(i)
             val start = row.getInt("start_ms")
-            val end = row.getInt("end_ms")
+            val end = row.optInt("end_ms", start + 15000)
             val original = row.getString("text")
             val edit = edits.optString(start.toString()).takeIf { edits.has(start.toString()) }
             if ((edit ?: original).isBlank() && edit == null) continue

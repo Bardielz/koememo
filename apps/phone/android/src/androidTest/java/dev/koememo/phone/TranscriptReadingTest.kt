@@ -38,8 +38,10 @@ class TranscriptReadingTest {
         val windows = JSONArray()
         val turns = ArrayList<SpeakerTurn>()
         repeat(40) { i ->
-            windows.put(JSONObject().put("start_ms", i * 15000).put("end_ms", (i + 1) * 15000)
-                .put("text", "段落 $i 原音"))
+            val row = JSONObject().put("start_ms", i * 15000).put("text", "段落 $i 原音")
+            // Older checkpoints may only record the start of a 15-second window.
+            if (i > 0) row.put("end_ms", (i + 1) * 15000)
+            windows.put(row)
             turns.add(SpeakerTurn(i * 15000, (i + 1) * 15000, 1 + i % 2))
         }
         val checkpoint = File(ctx.filesDir, "transcripts/${choice.key}-15s-v1-${clip.hash}.json")
