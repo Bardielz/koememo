@@ -83,7 +83,7 @@ class TranscriptionActivity : AppCompatActivity() {
         }
         layout.addView(modelAction)
         status = TextView(this).apply { setPadding(dp(16), dp(4), dp(16), dp(4)) }
-        action = MaterialButton(this).apply { setOnClickListener { toggle() } }
+        action = MaterialButton(this).apply { setOnClickListener { onTranscriptionAction() } }
         search = EditText(this).apply { setSingleLine(); hint = "搜索文字稿"; setText(state?.getString("query").orEmpty()) }
         layout.addView(action); layout.addView(status)
         player = RecordingPlayer(this)
@@ -250,7 +250,7 @@ class TranscriptionActivity : AppCompatActivity() {
         controls()
         load()
     }
-    private fun toggle() {
+    private fun onTranscriptionAction() {
         try {
             if (TranscriptionJob.active(this) == target.path) TranscriptionJob.pause(this, target)
             else if (choice.family.directory(this).isDirectory) TranscriptionJob.start(this, target, choice)
