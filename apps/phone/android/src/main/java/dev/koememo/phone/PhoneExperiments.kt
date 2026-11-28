@@ -1,11 +1,11 @@
 package dev.koememo.phone
 
 import android.app.Activity
-import android.app.AlertDialog
+import com.google.android.material.dialog.MaterialAlertDialogBuilder
 import android.content.Context
-import android.widget.Button
+import com.google.android.material.button.MaterialButton
 import android.widget.LinearLayout
-import android.widget.Switch
+import com.google.android.material.materialswitch.MaterialSwitch
 import dev.koememo.telemetry.showSyncHistory
 
 internal object PhoneExperiments {
@@ -16,12 +16,14 @@ internal object PhoneExperiments {
 
     fun show(activity: Activity) {
         val settings = prefs(activity)
-        val column = LinearLayout(activity).apply { orientation = LinearLayout.VERTICAL }
-        val master = Switch(activity).apply {
+        val column = LinearLayout(activity).apply { orientation = LinearLayout.VERTICAL; setPadding(dp(24), dp(8), dp(24), 0) }
+        val master = MaterialSwitch(activity).apply {
+            minimumHeight = dp(48)
             text = "开启实验功能"
             isChecked = settings.getBoolean("enabled", false)
         }
-        val metrics = Switch(activity).apply {
+        val metrics = MaterialSwitch(activity).apply {
+            minimumHeight = dp(48)
             text = "同步性能与耗电统计"
             isChecked = settings.getBoolean("sync_metrics", false)
             isEnabled = master.isChecked
@@ -33,11 +35,11 @@ internal object PhoneExperiments {
         }
         column.addView(master)
         column.addView(metrics)
-        column.addView(Button(activity).apply {
+        column.addView(MaterialButton(activity).apply {
             text = "查看同步统计"
             setOnClickListener { showSyncHistory(activity) }
         })
-        AlertDialog.Builder(activity).setTitle("实验功能").setMessage("设置从下次同步尝试生效。")
+        MaterialAlertDialogBuilder(activity).setTitle("实验功能").setMessage("设置从下次同步尝试生效。")
             .setView(column).setPositiveButton("完成", null).show()
     }
 }

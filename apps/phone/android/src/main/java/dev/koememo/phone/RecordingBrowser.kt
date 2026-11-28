@@ -3,7 +3,7 @@ package dev.koememo.phone
 import android.app.Activity
 import android.view.MenuItem
 import android.view.View
-import android.widget.Toolbar
+import com.google.android.material.appbar.MaterialToolbar
 import dev.koememo.sync.TimelineJournal
 import dev.koememo.sync.readTimeline
 import java.io.File
@@ -14,7 +14,7 @@ import java.time.format.DateTimeFormatter
 import java.time.format.ResolverStyle
 import java.util.Locale
 
-internal fun Activity.navigationBar(heading: String, back: Boolean): Toolbar = Toolbar(this).apply {
+internal fun Activity.navigationBar(heading: String, back: Boolean): MaterialToolbar = MaterialToolbar(this).apply {
     title = heading
     if (back) {
         setNavigationIcon(R.drawable.ic_back)
@@ -23,7 +23,7 @@ internal fun Activity.navigationBar(heading: String, back: Boolean): Toolbar = T
     }
 }
 
-internal fun Toolbar.action(label: String, visibleOnBar: Boolean = false, run: () -> Unit): MenuItem =
+internal fun MaterialToolbar.action(label: String, visibleOnBar: Boolean = false, run: () -> Unit): MenuItem =
     menu.add(label).apply {
         if (visibleOnBar) setShowAsAction(MenuItem.SHOW_AS_ACTION_ALWAYS)
         setOnMenuItemClickListener { run(); true }

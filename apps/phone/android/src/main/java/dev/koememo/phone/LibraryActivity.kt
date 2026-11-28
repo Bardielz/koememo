@@ -1,7 +1,7 @@
 package dev.koememo.phone
 
-import android.app.Activity
-import android.app.AlertDialog
+import androidx.appcompat.app.AppCompatActivity
+import com.google.android.material.dialog.MaterialAlertDialogBuilder
 import android.content.Intent
 import android.content.SharedPreferences
 import android.os.Bundle
@@ -10,6 +10,7 @@ import android.view.MenuItem
 import android.view.View
 import android.view.ViewGroup
 import android.widget.*
+import com.google.android.material.button.MaterialButton
 import dev.koememo.sync.ContextWindow
 import dev.koememo.sync.MarkPosition
 import dev.koememo.sync.PlaybackSpan
@@ -22,7 +23,7 @@ import java.util.Date
 import java.util.Locale
 import java.util.concurrent.Executors
 
-class LibraryActivity : Activity() {
+class LibraryActivity : AppCompatActivity() {
     private val root get() = File(filesDir, "audio")
     private val syncState by lazy { getSharedPreferences("sync_state", MODE_PRIVATE) }
     private val syncListener = SharedPreferences.OnSharedPreferenceChangeListener { _, key ->
@@ -96,7 +97,7 @@ class LibraryActivity : Activity() {
             content.addView(player)
             heading = TextView(this).apply { text = "正在读取录音…"; setPadding(0, dp(6), 0, dp(10)) }
             content.addView(heading)
-            fun entry(label: String, onClick: () -> Unit) = Button(this, null, android.R.attr.borderlessButtonStyle).apply {
+            fun entry(label: String, onClick: () -> Unit) = MaterialButton(this, null, androidx.appcompat.R.attr.borderlessButtonStyle).apply {
                 text = label
                 gravity = Gravity.START or Gravity.CENTER_VERTICAL
                 minimumHeight = dp(48)
@@ -131,7 +132,7 @@ class LibraryActivity : Activity() {
         heading = TextView(this).apply { text = if (dir == null) "录音会话" else "录音片段"; textSize = 16f }
         tools.addView(heading, LinearLayout.LayoutParams(0, -2, 1f))
         if (dir != null) {
-            val sort = Button(this, null, android.R.attr.borderlessButtonStyle).apply {
+            val sort = MaterialButton(this, null, androidx.appcompat.R.attr.borderlessButtonStyle).apply {
                 text = orderLabel()
                 setOnClickListener { view ->
                     PopupMenu(this@LibraryActivity, view).apply {
@@ -299,8 +300,8 @@ class LibraryActivity : Activity() {
             setPadding(dp(16), dp(10), dp(4), dp(10))
             isFocusable = true
         }
-        val title = TextView(context).apply { textSize = 17f; setTextColor(android.graphics.Color.rgb(25, 37, 40)) }
-        val detail = TextView(context).apply { textSize = 13f }
+        val title = TextView(context).apply { setTextAppearance(com.google.android.material.R.style.TextAppearance_Material3_TitleMedium) }
+        val detail = TextView(context).apply { setTextAppearance(com.google.android.material.R.style.TextAppearance_Material3_BodyMedium) }
         val more = ImageButton(context, null, android.R.attr.borderlessButtonStyle).apply { setImageResource(R.drawable.ic_more) }
         init {
             gravity = Gravity.CENTER_VERTICAL
@@ -368,7 +369,7 @@ class LibraryActivity : Activity() {
         io.execute {
             val result = runCatching { describeSession(dir, AudioSession.load(dir)) }
             runOnUiThread {
-                if (!isDestroyed && !isFinishing) AlertDialog.Builder(this).setTitle("录制详情")
+                if (!isDestroyed && !isFinishing) MaterialAlertDialogBuilder(this).setTitle("录制详情")
                     .setMessage(result.getOrElse { "无法读取录制详情" }).setPositiveButton("关闭", null).show()
             }
         }
@@ -408,7 +409,7 @@ class LibraryActivity : Activity() {
                 return label
             }
         }
-        android.app.AlertDialog.Builder(this).setTitle(if (byMotion) "录音上下文 · 活动由强到弱" else "录音上下文 · 时间顺序")
+        MaterialAlertDialogBuilder(this).setTitle(if (byMotion) "录音上下文 · 活动由强到弱" else "录音上下文 · 时间顺序")
             .setAdapter(adapter) { _, i ->
                 val item = sorted[i]
                 playVerified(File(dir, item.span.file), item.window.startMs, item.span, item.span.hash)
@@ -453,7 +454,7 @@ class LibraryActivity : Activity() {
                     }
                     clock.format(java.util.Date(mark.wallMs)) + "　" + where
                 }
-                android.app.AlertDialog.Builder(this).setTitle("本次录音的标记")
+                MaterialAlertDialogBuilder(this).setTitle("本次录音的标记")
                     .setItems(items.toTypedArray()) { _, i ->
                         val position = marks[i].second as? MarkPosition.Audio ?: return@setItems
                         val audio = File(dir, position.file)

@@ -3,7 +3,7 @@ package dev.koememo.phone
 import android.content.Context
 import android.media.MediaPlayer
 import android.view.View
-import android.widget.Button
+import com.google.android.material.button.MaterialButton
 import android.widget.LinearLayout
 import android.widget.SeekBar
 import android.widget.TextView
@@ -19,7 +19,7 @@ internal class RecordingPlayer(context: Context) : LinearLayout(context) {
     private val time = TextView(context)
     private val contextLabel = TextView(context)
     private val seek = SeekBar(context).apply { contentDescription = "播放进度" }
-    private val toggle = Button(context)
+    private val toggle = MaterialButton(context)
     private var queue = SessionPlayback(emptyList())
     private var index = 0
     private var offset = 0
@@ -46,6 +46,8 @@ internal class RecordingPlayer(context: Context) : LinearLayout(context) {
 
     init {
         orientation = VERTICAL
+        setPadding(dp(16), dp(8), dp(16), dp(4))
+        title.setTextAppearance(com.google.android.material.R.style.TextAppearance_Material3_TitleMedium)
         visibility = View.GONE
         addView(title); addView(contextLabel); addView(seek)
         addView(LinearLayout(context).apply {

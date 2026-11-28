@@ -1,8 +1,8 @@
 package dev.koememo.phone
 
 import android.animation.ValueAnimator
-import android.app.Activity
-import android.app.AlertDialog
+import androidx.appcompat.app.AppCompatActivity
+import com.google.android.material.dialog.MaterialAlertDialogBuilder
 import android.content.Intent
 import android.content.SharedPreferences
 import android.icu.text.BreakIterator
@@ -13,6 +13,7 @@ import android.view.View
 import android.view.ViewGroup
 import android.view.accessibility.AccessibilityManager
 import android.widget.*
+import com.google.android.material.button.MaterialButton
 import dev.koememo.sync.sha256
 import org.json.JSONObject
 import java.io.File
@@ -20,7 +21,7 @@ import java.text.DateFormat
 import java.util.Date
 import java.util.concurrent.Executors
 
-class TranscriptionActivity : Activity() {
+class TranscriptionActivity : AppCompatActivity() {
     private lateinit var target: File
     private lateinit var status: TextView
     private lateinit var action: Button
@@ -73,8 +74,8 @@ class TranscriptionActivity : Activity() {
                 startActivity(Intent(this@TranscriptionActivity, SpeakerActivity::class.java).putExtra("directory", directory.path))
             }
         })
-        status = TextView(this)
-        action = Button(this).apply { setOnClickListener { toggle() } }
+        status = TextView(this).apply { setPadding(dp(16), dp(4), dp(16), dp(4)) }
+        action = MaterialButton(this).apply { setOnClickListener { toggle() } }
         search = EditText(this).apply { setSingleLine(); hint = "搜索文字稿"; setText(state?.getString("query").orEmpty()) }
         layout.addView(action); layout.addView(status)
         player = RecordingPlayer(this)
@@ -247,7 +248,7 @@ class TranscriptionActivity : Activity() {
                 ui { outcome.onSuccess { load(line.clip.file) }.onFailure { status.text = "保存校订失败 · ${it.localizedMessage}" } }
             }
         }
-        AlertDialog.Builder(this).setTitle("校订文字").setMessage("识别原文　" + line.original).setView(input)
+        MaterialAlertDialogBuilder(this).setTitle("校订文字").setMessage("识别原文　" + line.original).setView(input)
             .setPositiveButton("保存") { _, _ -> save(input.text.toString()) }
             .setNeutralButton("恢复识别原文") { _, _ -> save(null) }.setNegativeButton("取消", null).show()
     }

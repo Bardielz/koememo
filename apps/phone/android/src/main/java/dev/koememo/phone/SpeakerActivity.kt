@@ -1,17 +1,18 @@
 package dev.koememo.phone
 
-import android.app.Activity
-import android.app.AlertDialog
+import androidx.appcompat.app.AppCompatActivity
+import com.google.android.material.dialog.MaterialAlertDialogBuilder
 import android.content.Intent
 import android.os.Bundle
 import android.widget.*
+import com.google.android.material.button.MaterialButton
 import dev.koememo.sync.sha256
 import java.io.File
 import java.util.concurrent.CancellationException
 import java.util.concurrent.Executors
 import java.util.concurrent.atomic.AtomicBoolean
 
-class SpeakerActivity : Activity() {
+class SpeakerActivity : AppCompatActivity() {
     private val io = Executors.newSingleThreadExecutor()
     private val stop = AtomicBoolean()
     private lateinit var directory: File
@@ -34,7 +35,7 @@ class SpeakerActivity : Activity() {
             view.setPadding(safe.left, safe.top, safe.right, safe.bottom); insets
         }
         layout.addView(navigationBar("本次录音的发言人", true).apply { subtitle = sessionTitle(directory) })
-        action = Button(this).apply { isEnabled = false; setOnClickListener {
+        action = MaterialButton(this).apply { isEnabled = false; setOnClickListener {
             when {
                 analyzing -> { stop.set(true); isEnabled = false; status.text = "正在暂停…" }
                 SpeakerModel.directory(this@SpeakerActivity).isDirectory -> analyze()
@@ -130,17 +131,17 @@ class SpeakerActivity : Activity() {
         val row = LinearLayout(this).apply { gravity = android.view.Gravity.CENTER_VERTICAL }
         row.addView(TextView(this).apply { text = example.name; textSize = 17f; setPadding(dp(16), 0, 0, 0) },
             LinearLayout.LayoutParams(0, -2, 1f))
-        row.addView(Button(this).apply { text = "回听"; contentDescription = "回听${example.name}"; setOnClickListener {
+        row.addView(MaterialButton(this, null, androidx.appcompat.R.attr.borderlessButtonStyle).apply { text = "回听"; contentDescription = "回听${example.name}"; setOnClickListener {
             io.execute {
                 val valid = runCatching { example.clip.file.sha256() == example.clip.hash }.getOrDefault(false)
                 ui { if (valid) player.play(example.clip.file, example.offset, example.clip.span, example.name)
                     else status.text = "原音已更换，请重新分析" }
             }
         } })
-        row.addView(Button(this).apply { text = "命名"; contentDescription = "为${example.name}命名"; setOnClickListener {
+        row.addView(MaterialButton(this, null, androidx.appcompat.R.attr.borderlessButtonStyle).apply { text = "命名"; contentDescription = "为${example.name}命名"; setOnClickListener {
             val input = EditText(this@SpeakerActivity).apply { hint = "仅用于本次录音"; setSingleLine()
                 if (example.name != "发言人 ${example.id}") setText(example.name) }
-            AlertDialog.Builder(this@SpeakerActivity).setTitle("发言人 ${example.id} 的名字").setView(input)
+            MaterialAlertDialogBuilder(this@SpeakerActivity).setTitle("发言人 ${example.id} 的名字").setView(input)
                 .setPositiveButton("保存") { _, _ ->
                     val name = input.text.toString()
                     io.execute { try { store.rename(example.id, name); refresh() }
