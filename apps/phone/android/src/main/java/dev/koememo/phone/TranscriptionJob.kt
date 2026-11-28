@@ -19,13 +19,16 @@ import java.util.concurrent.atomic.AtomicBoolean
 class TranscriptionJob : JobService() {
     private val main = Handler(Looper.getMainLooper())
     private var execution: AtomicBoolean? = null
+    private var executionId: String? = null
 
     override fun onStartJob(params: JobParameters): Boolean {
         val scope = params.extras.getString(SCOPE) ?: return false
         val id = params.extras.getString("id") ?: return false
         if (prefs(this).getString("request", null) != id) return false
+        execution?.set(true)
         val cancelled = AtomicBoolean()
         execution = cancelled
+        executionId = id
         executor.execute {
             var recognizer: OfflineRecognizer? = null
             var current: File? = null
@@ -71,6 +74,7 @@ class TranscriptionJob : JobService() {
             main.post {
                 if (execution === cancelled) {
                     execution = null
+                    executionId = null
                     if (prefs(this).getString("request", null) == id) {
                         prefs(this).edit().remove("request").apply()
                         if (message != null) record(this, scope, message)
@@ -84,11 +88,14 @@ class TranscriptionJob : JobService() {
     }
 
     override fun onStopJob(params: JobParameters): Boolean {
+        val id = params.extras.getString("id") ?: return false
+        if (executionId != id) return false
         execution?.set(true)
         execution = null
+        executionId = null
         val scope = params.extras.getString(SCOPE) ?: return false
         // cancel() can race with onStopJob. Only retry the same, still requested task.
-        val retry = prefs(this).getString("request", null) == params.extras.getString("id")
+        val retry = prefs(this).getString("request", null) == id
         if (retry) record(this, scope, "系统暂缓，等待继续")
         notifyChange(null)
         return retry

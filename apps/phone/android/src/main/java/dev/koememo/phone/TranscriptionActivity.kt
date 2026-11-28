@@ -210,8 +210,11 @@ class TranscriptionActivity : Activity() {
         }
         action.isEnabled = !importing && (mine || (active == null && ready && pages.isNotEmpty() && !complete))
         val last = TranscriptionJob.status(this, target.path)
-        val detail = if (!mine && (last.startsWith("正在转写") || last == "等待系统调度" || last.startsWith("系统暂缓")))
-            "任务已中断，可继续转写" else last
+        val detail = when {
+            mine || last.isEmpty() -> last
+            last.startsWith("正在转写") || last == "等待系统调度" || last.startsWith("系统暂缓") -> "任务已中断，可继续转写"
+            else -> "上次任务 · $last"
+        }
         status.text = listOfNotNull(detail.takeIf { it.isNotEmpty() },
             pages.values.firstNotNullOfOrNull { it.error }?.let { "读取失败 · $it" },
             if (ready) "已转写 ${pages.values.count { it.complete }}/${pages.size} 段 · 点文字回听，长按校订" else "正在读取录音…").joinToString("\n")
