@@ -31,6 +31,9 @@ class LibraryActivity : Activity() {
     }
     private val io = Executors.newSingleThreadExecutor()
     private var directory: File? = null
+    private val overview get() = directory != null && !intent.getBooleanExtra("files", false)
+    private var restoreFile: File? = null
+    private var restoreMs = 0
     private var generation = 0
     private var playRequest = 0
     private var returningFromSession = false
@@ -73,17 +76,45 @@ class LibraryActivity : Activity() {
             insets
         }
         val dir = directory
-        val toolbar = navigationBar(dir?.let(::sessionTitle) ?: "录音库", dir != null)
+        val toolbar = navigationBar(if (dir == null) "录音库" else if (overview) "录音" else "音频文件", dir != null)
         layout.addView(toolbar)
+        if (dir != null) toolbar.subtitle = sessionTitle(dir)
+        if (overview && dir != null) {
+            restoreFile = state?.getString("playingFile")?.let(::File)
+            restoreMs = state?.getInt("playingOffset") ?: 0
+            toolbar.action("音频文件") {
+                player.pauseForNavigation()
+                startActivity(Intent(this, LibraryActivity::class.java).putExtra("segments", dir.path).putExtra("files", true))
+            }
+            toolbar.action("录制详情") { showDetails(dir) }
+            val content = LinearLayout(this).apply {
+                orientation = LinearLayout.VERTICAL
+                setPadding(dp(16), dp(16), dp(16), dp(12))
+            }
+            layout.addView(ScrollView(this).apply { addView(content) })
+            player = RecordingPlayer(this)
+            content.addView(player)
+            heading = TextView(this).apply { text = "正在读取录音…"; setPadding(0, dp(6), 0, dp(10)) }
+            content.addView(heading)
+            fun entry(label: String, onClick: () -> Unit) = Button(this, null, android.R.attr.borderlessButtonStyle).apply {
+                text = label
+                gravity = Gravity.START or Gravity.CENTER_VERTICAL
+                minimumHeight = dp(48)
+                setOnClickListener { onClick() }
+                content.addView(this)
+            }
+            entry("文字稿") { openTranscript(dir) }
+            entry("本次录音的标记") { showMarks(dir) }
+            entry("运动与心率") { showContext(dir) }
+            status = TextView(this).apply { visibility = View.GONE }
+            content.addView(status)
+            setContentView(layout)
+            return
+        }
         if (dir == null) {
             syncAction = toolbar.action("从手表同步", true) { if (SyncService.running) pauseSync() else startSync() }
             pausePending = toolbar.action("暂停待恢复的同步") { pauseSync() }
             toolbar.action("实验功能") { PhoneExperiments.show(this) }
-        } else {
-            toolbar.action("文字稿", true) { openTranscript(dir) }
-            toolbar.action("本次录音的标记") { showMarks(dir) }
-            toolbar.action("录音上下文") { showContext(dir) }
-            toolbar.action("录制详情") { showDetails(dir) }
         }
         search = SearchView(this).apply {
             isIconifiedByDefault = false
@@ -190,6 +221,21 @@ class LibraryActivity : Activity() {
             try {
                 val stamp = dir?.lastModified()
                 if (stamp != null && stamp > 0 && stamp == previousStamp) return@execute
+                if (overview && dir != null) {
+                    val playlist = SessionPlayback.load(dir)
+                    runOnUiThread {
+                        if (request != generation || isFinishing || isDestroyed) return@runOnUiThread
+                        val resume = player.currentFile ?: restoreFile
+                        val ms = if (player.currentFile != null) player.currentOffset else restoreMs
+                        player.bind(playlist, resume, ms)
+                        restoreFile = null
+                        heading.text = listOf(if (playlist.tracks.isEmpty()) "手机上还没有可回听的原音" else "", playlist.note)
+                            .filter(String::isNotEmpty).joinToString("\n")
+                        heading.visibility = if (heading.text.isEmpty()) View.GONE else View.VISIBLE
+                        loadedDirectoryStamp = stamp
+                    }
+                    return@execute
+                }
                 var expected = emptyMap<String, String>()
                 var mapped = emptyMap<String, PlaybackSpan>()
                 val rows = if (dir == null) {
@@ -220,7 +266,10 @@ class LibraryActivity : Activity() {
                     filter(reset = false)
                 }
             } catch (e: Exception) {
-                runOnUiThread { if (request == generation && !isDestroyed) { empty.text = "读取录音失败"; message(e.localizedMessage.orEmpty()) } }
+                runOnUiThread { if (request == generation && !isDestroyed) {
+                    if (overview) heading.text = "读取录音失败" else empty.text = "读取录音失败"
+                    message(e.localizedMessage.orEmpty())
+                } }
             }
         }
     }
@@ -302,10 +351,9 @@ class LibraryActivity : Activity() {
         } else playVerified(file, 0, span, hash)
     }
     private fun openTranscript(target: File) {
-        search.clearFocus()
+        if (::search.isInitialized) search.clearFocus()
         playRequest++
-        player.release()
-        player.visibility = View.GONE
+        player.pauseForNavigation()
         startActivity(Intent(this, TranscriptionActivity::class.java).putExtra("path", target.path))
     }
     private fun export(file: File) {
@@ -374,7 +422,9 @@ class LibraryActivity : Activity() {
             val verified = runCatching { audio.sha256() == expected }.getOrDefault(false)
             runOnUiThread {
                 if (isDestroyed || isFinishing || request != playRequest) return@runOnUiThread
-                if (verified) player.play(audio, offsetMs, span)
+                if (verified && overview) {
+                    if (!player.playFrom(audio, offsetMs)) message("原音尚未就绪，请稍后重试")
+                } else if (verified) player.play(audio, offsetMs, span)
                 else message("对应原音缺失或校验失败，请重新同步")
             }
         }.start()
@@ -414,6 +464,10 @@ class LibraryActivity : Activity() {
     }
     override fun onSaveInstanceState(state: Bundle) {
         super.onSaveInstanceState(state)
+        if (overview && ::player.isInitialized) {
+            state.putString("playingFile", player.currentFile?.path ?: restoreFile?.path)
+            state.putInt("playingOffset", if (player.currentFile != null) player.currentOffset else restoreMs)
+        }
         if (!::list.isInitialized) return
         state.putString("query", search.query.toString())
         state.putString("anchor", shown.getOrNull(list.firstVisiblePosition)?.file?.path ?: anchorPath)

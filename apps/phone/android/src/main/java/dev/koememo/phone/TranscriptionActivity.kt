@@ -151,8 +151,11 @@ class TranscriptionActivity : Activity() {
                 if (text.isBlank() && edit == null) continue
                 val span = clip.span?.takeUnless { clip.hashMismatch }
                 val wall = span?.let { clip.run?.timeAt(it.file, start.toLong()) }
-                val prefix = (wall?.let { clock.format(Date(it)) + "　" }.orEmpty()) +
-                    "${clip.file.name}　${duration(start / 1000L)}\n"
+                val prefix = when {
+                    wall != null -> clock.format(Date(wall)) + "\n"
+                    !target.isDirectory -> duration(start / 1000L) + "\n"
+                    else -> ""
+                }
                 val context = span?.contextAt(start)?.description()?.let { "\n$it" }.orEmpty()
                 add(Line(clip, start, text, edit, prefix, context))
             }
@@ -184,9 +187,15 @@ class TranscriptionActivity : Activity() {
             last.startsWith("正在转写") || last == "等待系统调度" || last.startsWith("系统暂缓") -> "任务已中断，可继续转写"
             else -> "上次任务 · $last"
         }
-        status.text = listOfNotNull(detail.takeIf { it.isNotEmpty() },
+        val progress = when {
+            !ready -> "正在读取录音…"
+            pages.isEmpty() -> "等待音频同步"
+            target.isDirectory && !complete -> "完整转写进度 ${100L * pages.values.count { it.complete } / pages.size}% · 点文字回听，长按校订"
+            else -> "点文字回听，长按校订"
+        }
+        status.text = listOfNotNull((if (mine && detail.startsWith("正在转写")) "正在转写" else detail).takeIf { it.isNotEmpty() },
             pages.values.firstNotNullOfOrNull { it.error }?.let { "读取失败 · $it" },
-            if (ready) "已转写 ${pages.values.count { it.complete }}/${pages.size} 段 · 点文字回听，长按校订" else "正在读取录音…").joinToString("\n")
+            progress).joinToString("\n")
     }
     private fun toggle() {
         try {
@@ -213,7 +222,7 @@ class TranscriptionActivity : Activity() {
         io.execute {
             val valid = runCatching { !line.clip.hashMismatch && line.clip.file.sha256() == line.clip.hash }.getOrDefault(false)
             ui {
-                if (valid) player.play(line.clip.file, line.start, line.clip.span)
+                if (valid) player.play(line.clip.file, line.start, line.clip.span, "这段原话")
                 else status.text = "原音缺失或校验失败，请重新同步"
             }
         }

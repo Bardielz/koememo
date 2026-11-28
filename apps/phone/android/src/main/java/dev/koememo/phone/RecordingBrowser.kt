@@ -58,7 +58,8 @@ internal data class BrowserRow(val file: File, val title: String, val subtitle: 
 
 internal fun sessionRow(dir: File, count: Int): BrowserRow {
     val start = startedAt(dir)
-    return BrowserRow(dir, start?.format(displayDate) ?: dir.name, if (start == null) "$count 个本地片段" else "会话开始 · $count 个本地片段",
+    val availability = if (count > 0) "可回听" else "等待音频同步"
+    return BrowserRow(dir, start?.format(displayDate) ?: dir.name, if (start == null) availability else "录音开始 · $availability",
         start?.format(searchDate).orEmpty())
 }
 

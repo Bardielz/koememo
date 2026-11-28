@@ -65,7 +65,7 @@ class TranscriptionJob : JobService() {
                     catch (e: Exception) { failures.add("${clip.file.name} · ${e.localizedMessage}") }
                     publish(null, clip.file)
                 }
-                if (failures.isEmpty()) "已完成本次任务的 ${clips.size} 个片段"
+                if (failures.isEmpty()) "本次录音转写完成"
                 else "完成 ${clips.size - failures.size}/${clips.size} 段，首个失败片段：${failures.first()}"
             } catch (_: CancellationException) { null }
             catch (e: Exception) { "转写中断 · ${current?.name.orEmpty()} ${e.localizedMessage.orEmpty()}" }
