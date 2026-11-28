@@ -20,6 +20,16 @@ class QuietGateTest {
         assertFalse(gate.paused)
     }
 
+    @Test fun probabilityControlsPauseAndResumeIndependentlyOfLoudness() {
+        val gate = QuietGate(rate)
+        repeat(101) { gate.accept(block(120), quiet.size, true, 0.34f) }
+        assertTrue(gate.paused)
+        assertNull(gate.accept(quiet, quiet.size, true, 0.59f))
+        assertNotNull(gate.accept(quiet, quiet.size, true, 0.60f))
+        repeat(101) { gate.accept(quiet, quiet.size, true, 0.35f) }
+        assertFalse(gate.paused)
+    }
+
     @Test fun unavailableMicOpensGateAndCannotTriggerAnotherGap() {
         val gate = QuietGate(rate)
         repeat(110) { gate.accept(quiet, quiet.size, true) }

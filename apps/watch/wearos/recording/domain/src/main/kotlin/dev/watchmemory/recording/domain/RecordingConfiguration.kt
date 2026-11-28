@@ -10,11 +10,13 @@ data class RecordingConfiguration(
     val reuseOgg: Boolean = false,
     val sensorTimeline: Boolean = false,
     val noiseSuppression: Boolean = true,
-    val quietGate: Boolean = false
+    val quietGate: Boolean = false,
+    val voiceProbability: Boolean = false
 ) {
     init {
         require(!quietGate || experimentsEnabled)
         require(!sensorTimeline || experimentsEnabled)
+        require(!voiceProbability || quietGate)
         require(sampleRate in ExperimentPolicy.sampleRates)
         require(bitrate in encoding.rates)
         require(experimentsEnabled || (source == RecordingSource.MIC && sampleRate == 16000 && encoding == RecordingEncoding.AAC && bitrate == 48000))

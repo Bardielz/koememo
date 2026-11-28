@@ -9,6 +9,7 @@ import java.nio.ByteBuffer
 import kotlin.math.*
 
 class AndroidCaptureBackend(
+    private val assets: android.content.res.AssetManager,
     override val id: String = "android.media",
     private val matchesDevice: (WatchDevice) -> Boolean = { true },
     private val acceptsConfiguration: (RecordingConfiguration) -> Boolean = { true },
@@ -25,6 +26,7 @@ class AndroidCaptureBackend(
         val observer = request.observer
         val diagnostics = request.diagnostics
         val suppression = SessionNoiseSuppression()
+        var voice: VoiceProbability? = null
         var mic: PcmInput? = null
         var codec: MediaCodec? = null
         var codecStarted = false
@@ -52,6 +54,17 @@ class AndroidCaptureBackend(
             codecStarted = true
             val ns = suppression.configure(mic.audioSessionId, source, request.configuration.noiseSuppression)
             observer.configured(ns)
+            if (request.configuration.voiceProbability) {
+                voice = try {
+                    VoiceProbability.open(assets, sampleRate)
+                } catch (e: Exception) {
+                    observer.configured(mapOf("vad_unavailable" to e.javaClass.simpleName))
+                    null
+                } catch (e: LinkageError) {
+                    observer.configured(mapOf("vad_unavailable" to e.javaClass.simpleName))
+                    null
+                }
+            }
             mic.start()
             micStarted = true
             observer.configured(mapOf("capture_backend" to id, "requested_sample_rate" to sampleRate,
@@ -115,9 +128,20 @@ class AndroidCaptureBackend(
                             }
                             val wasPaused = gate.paused
                             // An encoder which never produces its first packet must still time out.
-                            val output = gate.accept(pcm, pending, hasEncodedAudio && micSilenced == false)
+                            val score = if (request.configuration.voiceProbability) {
+                                try {
+                                    voice?.score(pcm, pending) ?: 1f
+                                } catch (e: Exception) {
+                                    voice?.close()
+                                    voice = null
+                                    observer.configured(mapOf("vad_disabled" to e.javaClass.simpleName))
+                                    1f
+                                }
+                            } else null
+                            val output = gate.accept(pcm, pending, hasEncodedAudio && micSilenced == false, score)
                             if (gate.paused) observer.quietProgress()
                             if (wasPaused != gate.paused) {
+                                if (score != null) observer.configured(mapOf("vad_transition_score" to score))
                                 observer.quietTransition(if (gate.paused) "pause" else "resume",
                                     gate.capturedSamples, gate.heldSamples, gate.replaySamples)
                             }
@@ -223,6 +247,7 @@ class AndroidCaptureBackend(
                 }
             }
             cleanup("MIC_STOP") { if (micStarted) mic?.stop() }
+            cleanup("VAD_RELEASE") { voice?.close() }
             suppression.release()
             cleanup("MIC_RELEASE") { mic?.release() }
             cleanup("CODEC_STOP") { if (codecStarted) codec?.stop() }

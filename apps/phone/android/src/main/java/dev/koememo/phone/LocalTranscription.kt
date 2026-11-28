@@ -27,7 +27,9 @@ internal class LocalTranscription(context: Context, val file: File) {
     } catch (_: java.io.FileNotFoundException) {
         JSONObject().put("model", AsrModel.ID).put("sha256", key).put("windows", JSONArray())
     }
-    fun run(cancelled: () -> Boolean, update: (Int) -> Unit) {
+    data class SavedWindow(val count: Int, val startMs: Long, val text: String)
+
+    fun run(cancelled: () -> Boolean, update: (SavedWindow) -> Unit) {
         if (data.optBoolean("complete")) return
         val windows = data.getJSONArray("windows")
         val config = OfflineRecognizerConfig(modelConfig = OfflineModelConfig(
@@ -49,7 +51,7 @@ internal class LocalTranscription(context: Context, val file: File) {
                     } finally { stream.release() }
                     windows.put(JSONObject().put("start_ms", startMs).put("end_ms", endMs).put("text", text))
                     save()
-                    update(windows.length())
+                    update(SavedWindow(windows.length(), startMs, text))
                 }
                 startMs = endMs
                 index++

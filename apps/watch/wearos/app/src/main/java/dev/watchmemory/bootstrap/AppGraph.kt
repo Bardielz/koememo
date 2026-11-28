@@ -16,7 +16,7 @@ class AppGraph private constructor(context: Context) {
     fun processExitEvidence() = exitEvidence.snapshot()
     val captureBackends = CaptureBackends(
         WatchDevice(android.os.Build.MANUFACTURER, android.os.Build.MODEL, android.os.Build.VERSION.SDK_INT),
-        listOf(dev.watchmemory.recording.infrastructure.audio.AndroidCaptureBackend())
+        listOf(dev.watchmemory.recording.infrastructure.audio.AndroidCaptureBackend(context.assets))
     )
     val telemetry = dev.koememo.telemetry.DeviceTelemetry.android(context)
     val runtime = RecordingRuntime()

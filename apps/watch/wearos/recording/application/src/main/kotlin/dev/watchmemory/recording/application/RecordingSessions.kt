@@ -25,7 +25,7 @@ class RecordingSessions(private val repository: RecordingRepository, private val
         repository.save(SavedRecording(id.value, true, "正在启动录音"))
         repository.append(id, "run_started", fields + mapOf("run" to run,
             "experiments_enabled" to configuration.experimentsEnabled, "audio_source" to configuration.source.name,
-            "quiet_gate" to configuration.quietGate,
+            "quiet_gate" to configuration.quietGate, "voice_probability" to configuration.voiceProbability,
             "sensor_timeline" to configuration.sensorTimeline,
             "sample_rate" to configuration.sampleRate, "encoding" to configuration.encoding.name, "bitrate" to configuration.bitrate))
         return RecordingPlan(id, run, configuration)
