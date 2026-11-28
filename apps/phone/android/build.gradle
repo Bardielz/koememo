@@ -7,7 +7,10 @@ android {
     kotlinOptions { jvmTarget = '17' }
     lint { abortOnError true }
 }
-dependencies {  testImplementation 'junit:junit:4.13.2' }
+dependencies {
+    testImplementation 'junit:junit:4.13.2'
+    testImplementation 'org.json:json:20240303'
+}
 
 dependencies { implementation 'com.google.android.gms:play-services-wearable:19.0.0' }
 android.sourceSets.main.java.srcDir rootProject.file('../../../packages/contracts/audio/src')

@@ -12,6 +12,9 @@ import android.widget.*
 import java.io.File
 import java.util.concurrent.Executors
 import java.util.concurrent.CancellationException
+import dev.koememo.sync.RunTimeline
+import dev.koememo.sync.sessionTimeline
+import java.text.DateFormat
 
 class TranscriptionActivity : Activity() {
     private lateinit var file: File
@@ -21,6 +24,7 @@ class TranscriptionActivity : Activity() {
     private lateinit var player: RecordingPlayer
     @Volatile private var cancelled = false
     private var busy = false
+    private var timeline: RunTimeline? = null
     private var shownWindows = 0
     private var visible = false
     private var typing: ValueAnimator? = null
@@ -56,6 +60,8 @@ class TranscriptionActivity : Activity() {
         setContentView(layout)
         ready()
         worker.execute {
+            val run = runCatching { sessionTimeline(file).firstOrNull { r -> r.spans.any { it.file == file.name } } }.getOrNull()
+            ui { timeline = run }
             try {
                 val transcript = LocalTranscription(applicationContext, file)
                 ui { display(transcript); if (transcript.data.optBoolean("complete")) action.isEnabled = false }
@@ -73,9 +79,10 @@ class TranscriptionActivity : Activity() {
         worker.execute {
             try {
                 val transcript = LocalTranscription(applicationContext, file)
+                val audioHash = transcript.data.optString("sha256")
                 try { transcript.run({ cancelled }) { window -> ui {
                     if (window.count == shownWindows + 1) {
-                        addWindow(window.startMs.toInt(), window.text, animate = visible)
+                        addWindow(window.startMs.toInt(), window.text, audioHash, animate = visible)
                     }
                     status.text = "已保存 ${window.count} 个时间区间"
                 } } }
@@ -87,9 +94,10 @@ class TranscriptionActivity : Activity() {
     }
     private fun display(transcript: LocalTranscription) {
         val windows = transcript.data.getJSONArray("windows")
+        val audioHash = transcript.data.optString("sha256")
         for (i in shownWindows until windows.length()) {
             val w = windows.getJSONObject(i)
-            addWindow(w.getInt("start_ms"), w.getString("text"), animate = false)
+            addWindow(w.getInt("start_ms"), w.getString("text"), audioHash, animate = false)
         }
         status.text = when {
             transcript.data.optBoolean("complete") -> if (rows.childCount == 0) "已完成，未识别出文字" else "已完成，点文字回听"
@@ -97,16 +105,20 @@ class TranscriptionActivity : Activity() {
             else -> file.name
         }
     }
-    private fun addWindow(start: Int, text: String, animate: Boolean) {
+    private fun addWindow(start: Int, text: String, audioHash: String, animate: Boolean) {
         shownWindows++
         if (text.isBlank()) return
         typing?.end()
-        val prefix = "%d:%02d　".format(start / 60000, start / 1000 % 60)
-        val label = prefix + text
+        val span = timeline?.spans?.find { it.file == file.name && it.hash == audioHash }
+        val recordedAt = span?.let { timeline?.timeAt(it.file, start.toLong()) }
+        val clock = recordedAt?.let { DateFormat.getTimeInstance(DateFormat.MEDIUM).format(java.util.Date(it)) + "　" }.orEmpty()
+        val prefix = clock + "%d:%02d　".format(start / 60000, start / 1000 % 60)
+        val contextText = span?.contextAt(start)?.let { "\n" + it.description() }.orEmpty()
+        val label = prefix + text + contextText
         val row = Button(this).apply {
             this.text = label
             contentDescription = label
-            setOnClickListener { player.play(file, start) }
+            setOnClickListener { player.play(file, start, span) }
         }
         rows.addView(row)
         val accessibility = getSystemService(Context.ACCESSIBILITY_SERVICE) as AccessibilityManager
@@ -119,7 +131,7 @@ class TranscriptionActivity : Activity() {
             boundaries.add(end)
             end = iterator.next()
         }
-        row.text = prefix
+        row.text = prefix + contextText
         var displayed = 0
         typing = ValueAnimator.ofInt(0, boundaries.lastIndex).apply {
             duration = (boundaries.lastIndex * 40L).coerceAtMost(2400L)
@@ -127,7 +139,7 @@ class TranscriptionActivity : Activity() {
             addUpdateListener {
                 val count = it.animatedValue as Int
                 if (count != displayed) {
-                    row.text = label.substring(0, prefix.length + boundaries[count])
+                    row.text = prefix + text.substring(0, boundaries[count]) + contextText
                     displayed = count
                 }
             }

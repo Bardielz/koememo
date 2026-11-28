@@ -17,7 +17,7 @@ class OpusSegmentWriter @JvmOverloads constructor(
     private val prefix: String,
     private val segmentUs: Long = 300_000_000,
     private val reuseBuffers: Boolean = false,
-    private val onClosed: (String, Long, Long, Long, String) -> Unit
+    private val onClosed: (ClosedSegment) -> Unit
 ) : RecordingWriter {
     private class Packet(var data: ByteArray, var length: Int, var samples: Int) {
         var inHistory = false
@@ -31,6 +31,8 @@ class OpusSegmentWriter @JvmOverloads constructor(
     private var stream: FileOutputStream? = null
     private var buffered: BufferedOutputStream? = null
     private var index = 0
+    private var playbackStartUs = 0L
+    private var lastPacketSamples = 0
     private var firstUs = 0L
     private var lastUs = Long.MIN_VALUE
     private var file: File? = null
@@ -65,6 +67,7 @@ class OpusSegmentWriter @JvmOverloads constructor(
         if (stream != null && ptsUs - firstUs >= segmentUs) closeSegment()
         if (stream == null) open(ptsUs)
         append(packet)
+        lastPacketSamples = samples
         lastUs = ptsUs
         packet.inHistory = true
         history.addLast(packet); historySamples += packet.samples
@@ -84,6 +87,8 @@ class OpusSegmentWriter @JvmOverloads constructor(
         val target = File(directory, "$prefix-${String.format(Locale.US, "%04d", ++index)}.ogg")
         check(target.createNewFile()) { "Refusing to overwrite ${target.name}" }
         file = target; stream = FileOutputStream(target); buffered = BufferedOutputStream(stream!!, 32768)
+        val preSkip = (identification[10].toInt() and 255) or ((identification[11].toInt() and 255) shl 8)
+        playbackStartUs = ptsUs + (preSkip - historySamples) * 1_000_000L / 48000
         firstUs = ptsUs; granule = 0; sequence = 0
         serial = UUID.randomUUID().hashCode(); bytesWritten = 0
         digest = MessageDigest.getInstance("SHA-256")
@@ -134,7 +139,8 @@ class OpusSegmentWriter @JvmOverloads constructor(
         try { flushPage(true); buffered!!.flush(); closing.fd.sync() }
         finally { stream = null; buffered = null; closing.close() }
         val hash = digest.digest().joinToString("") { "%02x".format(it.toInt() and 255) }
-        onClosed(checkNotNull(file).name, firstUs, lastUs, bytesWritten, hash)
+        onClosed(ClosedSegment(checkNotNull(file).name, firstUs, lastUs, bytesWritten, hash,
+            playbackStartUs, lastUs + lastPacketSamples * 1_000_000L / 48000))
     }
     override fun close() { closeSegment() }
 }

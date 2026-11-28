@@ -15,6 +15,7 @@ data class RecordingConfiguration(
 ) {
     init {
         require(!quietGate || experimentsEnabled)
+        require(!sensorTimeline || experimentsEnabled)
         require(!voiceProbability || quietGate)
         require(sampleRate in ExperimentPolicy.sampleRates)
         require(bitrate in encoding.rates)

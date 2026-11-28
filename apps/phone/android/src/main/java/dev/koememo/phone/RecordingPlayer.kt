@@ -7,6 +7,10 @@ import android.widget.Button
 import android.widget.LinearLayout
 import android.widget.SeekBar
 import android.widget.TextView
+import dev.koememo.sync.ContextWindow
+import dev.koememo.sync.PlaybackSpan
+import dev.koememo.sync.sessionTimeline
+import dev.koememo.sync.sha256
 import java.io.File
 import java.util.Locale
 
@@ -14,6 +18,9 @@ import java.util.Locale
 internal class RecordingPlayer(context: Context) : LinearLayout(context) {
     private val title = TextView(context)
     private val time = TextView(context)
+    private val contextLabel = TextView(context)
+    private var contextSpan: PlaybackSpan? = null
+    private var shownWindow: ContextWindow? = null
     private val seek = SeekBar(context).apply { contentDescription = "播放进度" }
     private val toggle = Button(context)
     private var player: MediaPlayer? = null
@@ -32,6 +39,7 @@ internal class RecordingPlayer(context: Context) : LinearLayout(context) {
         orientation = VERTICAL
         visibility = View.GONE
         addView(title)
+        addView(contextLabel)
         addView(seek)
         addView(LinearLayout(context).apply {
             gravity = android.view.Gravity.CENTER_VERTICAL
@@ -52,6 +60,7 @@ internal class RecordingPlayer(context: Context) : LinearLayout(context) {
             override fun onProgressChanged(bar: SeekBar, value: Int, fromUser: Boolean) {
                 if (!fromUser) return
                 time.text = timestamp(value)
+                showContext(value)
                 if (!dragging) seekTo(value) // Keyboard and accessibility actions.
             }
         })
@@ -63,7 +72,7 @@ internal class RecordingPlayer(context: Context) : LinearLayout(context) {
         current.seekTo(ms.toLong(), MediaPlayer.SEEK_CLOSEST)
     }
 
-    fun play(file: File, startMs: Int = 0) {
+    fun play(file: File, startMs: Int = 0, verifiedSpan: PlaybackSpan? = null) {
         release()
         title.text = file.name
         time.text = "正在读取录音…"
@@ -74,6 +83,16 @@ internal class RecordingPlayer(context: Context) : LinearLayout(context) {
         visibility = View.VISIBLE
         val current = MediaPlayer()
         player = current
+        if (verifiedSpan != null) setContext(verifiedSpan, startMs)
+        else Thread {
+            val span = runCatching {
+                val candidate = sessionTimeline(file).firstNotNullOfOrNull { run ->
+                    run.spans.find { it.file == file.name && it.windows.isNotEmpty() }
+                }
+                candidate?.takeIf { file.sha256() == it.hash }
+            }.getOrNull()
+            post { if (player === current && span != null) setContext(span, seek.progress) }
+        }.start()
         current.setOnPreparedListener {
             if (player !== it) return@setOnPreparedListener
             duration = it.duration
@@ -125,6 +144,23 @@ internal class RecordingPlayer(context: Context) : LinearLayout(context) {
     private fun showPosition(ms: Int) {
         seek.progress = ms
         time.text = timestamp(ms)
+        showContext(ms)
+    }
+
+    private fun setContext(span: PlaybackSpan, ms: Int) {
+        if (span.windows.isEmpty()) return
+        contextSpan = span
+        contextLabel.visibility = View.VISIBLE
+        contextLabel.text = "当前位置暂无传感器样本"
+        showContext(ms)
+    }
+
+    private fun showContext(ms: Int) {
+        val span = contextSpan ?: return
+        val window = span.contextAt(ms)
+        if (window == shownWindow) return
+        shownWindow = window
+        contextLabel.text = window?.description() ?: "当前位置暂无传感器样本"
     }
 
     private fun timestamp(ms: Int): String {
@@ -146,6 +182,9 @@ internal class RecordingPlayer(context: Context) : LinearLayout(context) {
         removeCallbacks(update)
         val old = player
         player = null
+        contextSpan = null
+        shownWindow = null
+        contextLabel.visibility = View.GONE
         old?.release()
         seeking = false
         dragging = false

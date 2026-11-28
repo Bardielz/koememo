@@ -109,13 +109,20 @@ open class SettingsActivity : Activity() {
                 settings.selectedQuietGate, settings::setVoiceProbability)
             if (settings.selectedVoiceProbability && settings.selectedQuietGate) label("人声概率达到 60% 时恢复，轻声可能被省略。")
             optimization("direct_pcm", "PCM 直读编码器", settings.selectedDirectPcm, true, settings::setDirectPcm)
+            val hasHeart = packageManager.hasSystemFeature(android.content.pm.PackageManager.FEATURE_SENSOR_HEART_RATE)
             optimization("sensor_timeline", "录音时记录运动和心率", settings.selectedSensorTimeline, true) { enabled ->
                 settings.setSensorTimeline(enabled)
-                if (enabled && checkSelfPermission(RecordingSensors.heartPermission) != android.content.pm.PackageManager.PERMISSION_GRANTED) {
+                if (enabled && hasHeart && checkSelfPermission(RecordingSensors.heartPermission) != android.content.pm.PackageManager.PERMISSION_GRANTED) {
                     requestPermissions(arrayOf(RecordingSensors.heartPermission), 42)
                 }
             }
-            label("加速度与心率使用采集时间。未授予身体传感器权限时仅记录运动。")
+            label(when {
+                !hasHeart -> "此表未声明心率传感器，可记录三轴加速度。"
+                checkSelfPermission(RecordingSensors.heartPermission) != android.content.pm.PackageManager.PERMISSION_GRANTED ->
+                    "心率需要授权。仅记录运动也可以继续录音。"
+                else -> "开启后随录音记录三轴加速度和心率。戴稳手表有助于获得有效心率。"
+            })
+            label("与手机同步已保存的录音时，同时分享每 15 秒的活动和心率摘要。原始样本保存在手表。")
             optimization("reuse_ogg", "复用 Ogg 缓冲（Opus）", settings.selectedReuseOgg,
                 settings.selectedEncoding == RecordingEncoding.OPUS, settings::setReuseOgg)
             column.addView(Button(this).apply {

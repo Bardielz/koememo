@@ -15,7 +15,11 @@ class SegmentWriterTest {
             val dir = Files.createTempDirectory("rate-$rate").toFile()
             try {
                 var finalizedHash = ""
-                val writer = SegmentWriter(dir, "run", sampleRate = rate) { _, _, _, _, hash -> finalizedHash = hash }
+                val writer = SegmentWriter(dir, "run", sampleRate = rate) { segment ->
+                    finalizedHash = segment.sha256
+                    assertEquals(0L, segment.playbackStartUs)
+                    assertEquals(2 * (1024L * 1_000_000 / rate), segment.endPtsUs)
+                }
                 writer.use {
                     val reusable = ByteArray(8191) { 99 }
                     it.write(reusable, 0, 100)
@@ -41,7 +45,7 @@ class SegmentWriterTest {
         try {
             val closed = mutableMapOf<String, String>()
             val original = (0 until 20).map { i -> ByteArray(100 + i) { i.toByte() } }
-            SegmentWriter(directory, "run", 192_000) { name, _, _, _, hash -> closed[name] = hash }.use { writer ->
+            SegmentWriter(directory, "run", 192_000) { closed[it.name] = it.sha256 }.use { writer ->
                 original.forEachIndexed { i, bytes -> writer.write(bytes, i * 64000L) }
             }
             val decoded = mutableListOf<ByteArray>()
@@ -73,7 +77,7 @@ class SegmentWriterTest {
         try {
             val file = java.io.File(dir, "run-0001.aac").apply { writeText("original") }
             assertThrows(java.io.IOException::class.java) {
-                SegmentWriter(dir, "run") { _, _, _, _, _ -> }.use { it.write(byteArrayOf(1), 0) }
+                SegmentWriter(dir, "run") {}.use { it.write(byteArrayOf(1), 0) }
             }
             assertEquals("original", file.readText())
         } finally { dir.deleteRecursively() }
@@ -82,7 +86,7 @@ class SegmentWriterTest {
         val dir = Files.createTempDirectory("oversize").toFile()
         try {
             assertThrows(IllegalArgumentException::class.java) {
-                SegmentWriter(dir, "run") { _, _, _, _, _ -> }.use { it.write(ByteArray(8192), 0) }
+                SegmentWriter(dir, "run") {}.use { it.write(ByteArray(8192), 0) }
             }
             assertEquals(0, dir.listFiles()!!.size)
         } finally { dir.deleteRecursively() }

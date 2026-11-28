@@ -24,11 +24,25 @@ class AudioTransferSession(private val context: Context, private val diagnostics
             } }
         }
     }
+    private fun sendTimelines(output: DataOutputStream, entries: List<Pair<Segment, File>>, includeContext: Boolean, progress: TransferProgress) {
+        val sessions = entries.groupBy { it.first.session }
+        output.writeInt(sessions.size)
+        for ((id, segments) in sessions) {
+            val catalog = segments.associate { it.first.name to it.first.hash }
+            output.writeUTF(id)
+            val journal = File(segments.first().second.parentFile, "events.jsonl")
+            writeTimelineSnapshot(output, journal, catalog, includeContext) { progress.advanced(0) }
+        }
+        output.flush()
+    }
+
     fun serve(channel: TransferChannel) {
         val timer = java.util.Timer(true)
         val progress = TransferProgress(android.os.SystemClock::elapsedRealtime)
-        val withReceipts = channel.path.startsWith("$RECEIPTS_CHANNEL/")
-        val prefix = if (withReceipts) RECEIPTS_CHANNEL else CHANNEL
+        val withContext = channel.path.startsWith("$CONTEXT_CHANNEL/")
+        val withTimeline = withContext || channel.path.startsWith("$TIMELINE_CHANNEL/")
+        val withReceipts = withTimeline || channel.path.startsWith("$RECEIPTS_CHANNEL/")
+        val prefix = when { withContext -> CONTEXT_CHANNEL; withTimeline -> TIMELINE_CHANNEL; withReceipts -> RECEIPTS_CHANNEL; else -> CHANNEL }
         val session = channel.path.removePrefix("$prefix/").takeIf {
             it.matches(Regex("[0-9a-f-]{36}"))
         }
@@ -65,7 +79,16 @@ class AudioTransferSession(private val context: Context, private val diagnostics
                 metrics?.enter("request")
                 progress.enter("request")
                 val index = input.readInt()
-                if (index == -1) { output.writeBoolean(true); output.flush(); break }
+                if (index == -1) {
+                    if (withTimeline) {
+                        progress.enter("timeline")
+                        sendTimelines(output, entries, withContext, progress)
+                        require(input.readBoolean()) { "时间轴未确认" }
+                    }
+                    output.writeBoolean(true)
+                    output.flush()
+                    break
+                }
                 val (entry,file) = entries[index]
                 val offset = input.readLong()
                 require(offset in 0..entry.size)

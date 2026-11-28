@@ -7,8 +7,10 @@
 | 接口 | 官方能力与边界 | KoeMemo 接入位置 |
 |---|---|---|
 | Galaxy Performance SDK 1.0.0 | 以 JAR 接入，经 socket 与系统守护进程通信，需要 INTERNET 权限。支持短时资源控制请求，官网未明确列出 Watch5。类参考明确标注本版本不支持 SPerfListener。 | 作为可选的手表性能实验模块。实际温控观测继续读取 Android PowerManager。公开 API 没有提供分部件能量或音频帧。[编程指南](https://developer.samsung.com/galaxy-performance/programming-guide.html) · [监听器参考](https://developer.samsung.com/galaxy-performance/api-reference/com/samsung/sdk/sperf/SPerfListener.html) |
-| Samsung Health Sensor SDK | 支持 Watch4 及后续型号。应用通过 HealthTrackingService 连接并枚举可用 tracker；根据 tracker 请求相应权限，分发走三星合作伙伴流程。 | 将来有佩戴或生理上下文需求时，通过独立健康功能接入。传感器监听和用户授权由该功能管理。[接入指南](https://developer.samsung.com/health/sensor/guide/getting-started.html) · [分发流程](https://developer.samsung.com/health/sensor/process.html) |
+| Samsung Health Sensor SDK | 支持 Watch4 及后续型号。连续心率约 1 Hz，提供 BPM、逐搏间期（IBI）及状态。连续加速度为 25 Hz。 | 录音默认路径通过标准 SensorManager 获取三轴加速度与可用的 BPM。若需要 IBI，可单独验证三星后端，按运行时 tracker 列表选用。[数据规格](https://developer.samsung.com/health/sensor/guide/data-specifications.html) · [接入指南](https://developer.samsung.com/health/sensor/guide/getting-started.html) |
 | Samsung Device Health Manager | 此前 Watch5 实机盘点发现 sdhms 服务；公开 SDK 能力与普通 APK 权限需要单独确认。 | 保留为 ADB 故障分析数据来源。此前同一固件通过 Android 公共 API 枚举到 0 个 PowerMonitor，仍应按设备探测。 |
+
+三星健康后端的验证顺序是连接 Health Sensor Service、枚举 `HEART_RATE_CONTINUOUS`、注册监听、佩戴验收心率和有效 IBI，最后用对照录音测增量耗电。保留每个数据点的采样时间和状态，单独校验 SDK 毫秒时间戳与音频 BOOTTIME 的对应关系。熄屏时允许批量交付。接入时应让同一指标只用一个来源。开发测试可使用健康服务的专用开发模式；面向普通用户分发需要合作伙伴批准并登记包名和签名。当前标准后端可以独立工作。[时间戳](https://developer.samsung.com/health/sensor/api-reference/com/samsung/android/service/health/tracking/data/DataPoint.html) · [批量机制](https://developer.samsung.com/health/sensor/guide/tracking-data.html) · [分发流程](https://developer.samsung.com/health/sensor/process.html)
 
 ## 第一阶段：验证 SDK 初始化
 

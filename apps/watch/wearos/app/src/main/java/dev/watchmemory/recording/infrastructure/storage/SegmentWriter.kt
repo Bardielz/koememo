@@ -9,13 +9,16 @@ import java.io.IOException
 import java.security.MessageDigest
 import java.util.Locale
 
+data class ClosedSegment(val name: String, val firstPtsUs: Long, val lastPtsUs: Long,
+    val bytes: Long, val sha256: String, val playbackStartUs: Long, val endPtsUs: Long)
+
 /** Independent of Android: continuous encoded frames, rotated without restarting capture. */
 class SegmentWriter(
     private val directory: File,
     private val prefix: String,
     private val segmentUs: Long = 300_000_000,
     private val sampleRate: Int = 16000,
-    private val onClosed: (String, Long, Long, Long, String) -> Unit
+    private val onClosed: (ClosedSegment) -> Unit
 ) : RecordingWriter {
     private val rateIndex = when (sampleRate) {
         16000 -> 8
@@ -68,6 +71,6 @@ class SegmentWriter(
         buffered = null
         try { buffer.flush(); closing.fd.sync() } finally { closing.close() }
         val hash = digest.digest().joinToString("") { "%02x".format(it.toInt() and 255) }
-        onClosed(name, firstUs, lastUs, bytes, hash)
+        onClosed(ClosedSegment(name, firstUs, lastUs, bytes, hash, firstUs, lastUs + 1024L * 1_000_000 / sampleRate))
     }
 }
