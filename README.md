@@ -1,6 +1,6 @@
 # KoeMemo
 
-KoeMemo 由 Kotlin 原生手表端和安卓手机端组成。手表负责熄屏录音和分段保存，手机可同步、播放和导出已保存的片段。手表端采用标准 Android 音频接口，Galaxy Watch5 是目前的主要验证设备。
+KoeMemo 用于在手表上记录一天的对话，随后在安卓手机上按会话查找文字、回听原音。手表独立录音，手机负责同步、离线转写和校订。两端使用 Kotlin，Galaxy Watch5 是目前的主要验证手表。
 
 当前开发版本 **0.1.7-dev**，处于设备验证阶段。KoeMemo 是原「随声记 / WatchMemory」项目的新名称；保留应用 ID `dev.watchmemory`，以兼容原有应用数据和更新路径。
 
@@ -127,7 +127,9 @@ python3 tools/audio/audit.py /path/to/new-export/files/recordings
     → 手机按需同步已关闭的文件 → 校验 SHA-256 → 播放或导出
 ```
 
-手机可对同步片段运行 SenseVoice INT8 本地转写。每完成约 15 秒的音频，手机先保存文字，再在前台逐字显示。重新打开会直接显示已保存的全文，点对应文字可回听。[手机端说明](apps/phone/README.md)
+手机首页按会话归集已同步音频。点会话可查看上次手表清单的收取进度、已匹配音频时长、静音省略和采集轮次内的缺口。旧录音仍可回听，缺少证据的指标显示未知。
+
+导入 SenseVoice INT8 后可一键转写整场已同步录音。离开页面后由安卓系统调度继续处理，手动暂停后可从已保存的约 15 秒窗口继续。搜索文字可跨分段回听，长按校订会保留识别原文。「片段、标记与导出」打开原有的逐段操作。[手机端说明](apps/phone/README.md)
 
 手表端另有独立运行的 [Watch5 卸载探针](tools/probes/watch-offload/README.md)和 [RNNoise CPU/GPU 对照](tools/probes/rnnoise-gpu/README.md)。
 

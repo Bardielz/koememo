@@ -27,8 +27,14 @@ class LibraryActivity : Activity() {
     private lateinit var sync: Button
     private lateinit var player: RecordingPlayer
     private val root get() = File(filesDir,"audio")
+    private var selectedDirectory: File? = null
     override fun onCreate(state: Bundle?) {
         super.onCreate(state)
+        intent.getStringExtra("segments")?.let {
+            val dir = File(it).canonicalFile
+            if (!dir.toPath().startsWith(root.canonicalFile.toPath()) || !dir.isDirectory) { finish(); return }
+            selectedDirectory = dir
+        }
         val layout = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
         layout.setOnApplyWindowInsetsListener { view, insets ->
             val safe = insets.getInsets(android.view.WindowInsets.Type.systemBars() or android.view.WindowInsets.Type.displayCutout())
@@ -59,6 +65,7 @@ class LibraryActivity : Activity() {
     }
     override fun onStart() {
         super.onStart()
+        if (isFinishing) return
         player.resumeUpdates()
         syncState.registerOnSharedPreferenceChangeListener(syncListener)
         if (!SyncService.running && syncState.contains(SyncService.PENDING)) {
@@ -68,7 +75,7 @@ class LibraryActivity : Activity() {
         if (SyncService.running) refresh()
     }
     override fun onStop() {
-        player.suspendUpdates()
+        if (::player.isInitialized) player.suspendUpdates()
         syncState.unregisterOnSharedPreferenceChangeListener(syncListener)
         super.onStop()
     }
@@ -80,11 +87,12 @@ class LibraryActivity : Activity() {
         pause.isEnabled = running || syncState.contains(SyncService.PENDING)
         if (!running) refresh()
     }
-    override fun onDestroy() { player.release(); super.onDestroy() }
+    override fun onDestroy() { if (::player.isInitialized) player.release(); super.onDestroy() }
     private fun refresh() {
         val generation = ++loadGeneration
         Thread {
-            val result = runCatching { root.walkTopDown().filter { it.isFile && it.extension in setOf("aac","ogg") }.sortedByDescending { it.path }.toList() }
+            val result = runCatching { selectedDirectory?.let(::localSegments)
+                ?: root.walkTopDown().filter { it.isAudioSegment() || it.name == SyncCatalog.FILE }.toList() }
             runOnUiThread {
                 if (generation != loadGeneration || isFinishing || isDestroyed) return@runOnUiThread
                 result.onSuccess { showFiles(it) }.onFailure { libraryHint.text = "读取录音失败：" + it.javaClass.simpleName }
@@ -92,6 +100,17 @@ class LibraryActivity : Activity() {
         }.start()
     }
     private fun showFiles(files: List<File>) {
+        if (selectedDirectory == null) {
+            val sessions = files.groupBy { it.parentFile!! }.entries.sortedByDescending { it.key.name }
+            libraryHint.text = if (sessions.isEmpty()) "手机上还没有录音，点「从手表同步」开始。" else "录音会话（${sessions.size}）"
+            list.adapter = ArrayAdapter(this, android.R.layout.simple_list_item_1, sessions.map {
+                "${it.key.name}　${it.value.count { f -> f.name != SyncCatalog.FILE }} 个本地片段"
+            })
+            list.setOnItemClickListener { _, _, index, _ ->
+                startActivity(Intent(this, TranscriptionActivity::class.java).putExtra("path", sessions[index].key.path))
+            }
+            return
+        }
         libraryHint.text = if (files.isEmpty()) "手机上还没有录音，点「从手表同步」开始。" else "本地录音（${files.size}）"
         list.adapter = ArrayAdapter(this, android.R.layout.simple_list_item_1, files.map { it.parentFile!!.name + "/" + it.name })
         list.setOnItemClickListener { _, _, index, _ ->

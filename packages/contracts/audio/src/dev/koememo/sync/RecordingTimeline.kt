@@ -14,7 +14,7 @@ object TimelineJournal {
         "quiet_gate" to listOf("action", "captured_samples", "held_samples", "replay_samples"),
         "marker" to listOf("marker_boottime_ns", "wall_ms", "elapsed_ms"),
         "segment_closed" to listOf("run", "file", "sha256", "playback_start_us", "end_pts_us"),
-        "run_stopped" to emptyList(), "error" to emptyList()
+        "run_stopped" to listOf("wall_ms"), "error" to listOf("wall_ms")
     )
 
     fun project(event: JSONObject): JSONObject? {
@@ -39,7 +39,7 @@ sealed class MarkPosition {
     object Unknown : MarkPosition()
 }
 
-class RunTimeline(val rate: Int, private val elapsedMs: Long, private val wallMs: Long) {
+class RunTimeline(val rate: Int, private val elapsedMs: Long, val wallMs: Long) {
     private data class Anchor(val ns: Long, val frame: Long)
     private data class Gap(val start: Long, val end: Long, val totalOmitted: Long)
     private val anchors = mutableListOf<Anchor>()
@@ -47,6 +47,13 @@ class RunTimeline(val rate: Int, private val elapsedMs: Long, private val wallMs
     private val gaps = mutableListOf<Gap>()
     private var pendingGap: Long? = null
     private var captureEnd: Long? = null
+    val captureUs get() = captureEnd?.let { it * 1_000_000L / rate }
+    val omittedUs get() = (gaps.lastOrNull()?.totalOmitted ?: 0L) * 1_000_000L / rate
+    val openOmission get() = pendingGap != null
+    var endWallMs: Long? = null
+        internal set
+    var endEvent: String? = null
+        internal set
     val spans = mutableListOf<PlaybackSpan>()
     val marks = mutableListOf<TimelineMark>()
 
@@ -128,7 +135,11 @@ internal class TimelineIndex {
                 runs[e.getString("run")] = run
                 active = run
             }
-            "run_stopped", "error" -> active = null
+            "run_stopped", "error" -> {
+                active?.endEvent = e.getString("event")
+                if (e.has("wall_ms")) active?.endWallMs = e.getLong("wall_ms")
+                active = null
+            }
             "audio_configuration" -> {
                 if (e.has("audio_boottime_ns")) active?.anchor(e.getLong("audio_boottime_ns"), e.getLong("audio_frame_position"))
                 if (e.has("capture_end_samples")) active?.finish(e.getLong("capture_end_samples"))

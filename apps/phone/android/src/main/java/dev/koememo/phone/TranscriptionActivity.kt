@@ -1,165 +1,292 @@
 package dev.koememo.phone
 
-import android.app.Activity
 import android.animation.ValueAnimator
-import android.content.Context
+import android.app.Activity
+import android.app.AlertDialog
 import android.content.Intent
+import android.content.SharedPreferences
 import android.icu.text.BreakIterator
 import android.os.Bundle
-import android.view.animation.LinearInterpolator
+import android.text.Editable
+import android.text.TextWatcher
+import android.view.View
+import android.view.ViewGroup
 import android.view.accessibility.AccessibilityManager
 import android.widget.*
+import dev.koememo.sync.sha256
 import java.io.File
-import java.util.concurrent.Executors
-import java.util.concurrent.CancellationException
-import dev.koememo.sync.RunTimeline
-import dev.koememo.sync.sessionTimeline
 import java.text.DateFormat
+import java.util.Date
+import java.util.concurrent.Executors
 
 class TranscriptionActivity : Activity() {
-    private lateinit var file: File
+    private lateinit var target: File
+    private lateinit var info: TextView
     private lateinit var status: TextView
     private lateinit var action: Button
-    private lateinit var rows: LinearLayout
+    private lateinit var search: EditText
     private lateinit var player: RecordingPlayer
-    @Volatile private var cancelled = false
-    private var busy = false
-    private var timeline: RunTimeline? = null
-    private var shownWindows = 0
+    private val io = Executors.newSingleThreadExecutor()
+    private var catalog: AudioSession? = null // Owned by io.
+    private var ready = false
+    private var importing = false
+    private val syncState by lazy { getSharedPreferences("sync_state", MODE_PRIVATE) }
+    private val syncListener = SharedPreferences.OnSharedPreferenceChangeListener { _, key ->
+        if (key == "active" && !SyncService.running) load()
+    }
     private var visible = false
-    private var typing: ValueAnimator? = null
+    private val pages = linkedMapOf<File, Page>()
+    private val adapter = Lines()
+    private var shown = emptyList<Line>()
+    private var animate: Line? = null
+    private val changed: (File?) -> Unit = { file ->
+        if (file == null) controls()
+        else if ((target.isDirectory && file.parentFile == target) || target == file) load(file)
+    }
+
+    private data class Line(val clip: SessionClip, val start: Int, val original: String, val edit: String?, val prefix: String, val context: String) {
+        val text get() = edit ?: original
+        fun label(body: String) = prefix + body + context
+    }
+    private data class Page(val complete: Boolean, val lines: List<Line>, val error: String? = null)
 
     override fun onCreate(state: Bundle?) {
         super.onCreate(state)
-        file = File(intent.getStringExtra("path") ?: "").canonicalFile
-        if (!file.isFile || !file.toPath().startsWith(File(filesDir, "audio").canonicalFile.toPath()) ||
-            file.extension !in setOf("aac", "ogg")) { finish(); return }
-        val layout = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
+        target = File(intent.getStringExtra("path").orEmpty()).canonicalFile
+        val directory = if (target.isDirectory) target else target.parentFile
+        if (directory == null || !directory.toPath().startsWith(File(filesDir, "audio").canonicalFile.toPath()) ||
+            !(target.isDirectory || target.isAudioSegment())) { finish(); return }
+        val layout = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; isFocusableInTouchMode = true }
         layout.setOnApplyWindowInsetsListener { view, insets ->
-            val safe = insets.getInsets(android.view.WindowInsets.Type.systemBars())
+            val safe = insets.getInsets(android.view.WindowInsets.Type.systemBars() or android.view.WindowInsets.Type.ime())
             view.setPadding(safe.left, safe.top, safe.right, safe.bottom); insets
         }
-        status = TextView(this).apply { text = file.name }
-        layout.addView(status)
-        action = Button(this).apply { setOnClickListener {
-            if (busy) { cancelled = true; isEnabled = false }
-            else if (AsrModel.directory(this@TranscriptionActivity).isDirectory) start()
-            else startActivityForResult(Intent(Intent.ACTION_OPEN_DOCUMENT_TREE), 1)
-        } }
-        layout.addView(action)
+        info = TextView(this).apply { text = target.name }
+        status = TextView(this)
+        action = Button(this).apply { setOnClickListener { toggle() } }
+        search = EditText(this).apply { setSingleLine(); hint = "搜索文字稿"; setText(state?.getString("query").orEmpty()) }
+        layout.addView(info)
+        if (target.isDirectory) layout.addView(Button(this).apply {
+            text = "片段、标记与导出"
+            setOnClickListener { startActivity(Intent(this@TranscriptionActivity, LibraryActivity::class.java).putExtra("segments", target.path)) }
+        })
+        layout.addView(action); layout.addView(status)
         player = RecordingPlayer(this)
-        layout.addView(player)
-        rows = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
-        val scroll = ScrollView(this).apply { addView(rows) }
-        layout.addView(scroll)
-        rows.addOnLayoutChangeListener { _, _, _, _, bottom, _, _, _, oldBottom ->
-            if (typing?.isRunning == true && bottom > oldBottom && scroll.scrollY >= oldBottom - scroll.height) {
-                scroll.scrollTo(0, bottom)
-            }
+        layout.addView(player); layout.addView(search)
+        val list = ListView(this).apply {
+            transcriptMode = AbsListView.TRANSCRIPT_MODE_NORMAL
+            adapter = this@TranscriptionActivity.adapter
+            setOnItemClickListener { _, _, index, _ -> play(shown[index]) }
+            setOnItemLongClickListener { _, _, index, _ -> edit(shown[index]); true }
         }
+        layout.addView(list)
+        search.addTextChangedListener(object : TextWatcher {
+            override fun beforeTextChanged(s: CharSequence?, start: Int, count: Int, after: Int) {}
+            override fun onTextChanged(s: CharSequence?, start: Int, before: Int, count: Int) = filter()
+            override fun afterTextChanged(s: Editable?) {}
+        })
         setContentView(layout)
-        ready()
-        worker.execute {
-            val run = runCatching { sessionTimeline(file).firstOrNull { r -> r.spans.any { it.file == file.name } } }.getOrNull()
-            ui { timeline = run }
-            try {
-                val transcript = LocalTranscription(applicationContext, file)
-                ui { display(transcript); if (transcript.data.optBoolean("complete")) action.isEnabled = false }
-            } catch (e: Exception) { ui { status.text = "读取进度失败：" + e.message } }
-        }
+        controls()
     }
-    private fun ready() {
-        busy = false
-        action.isEnabled = true
-        action.text = if (AsrModel.directory(this).isDirectory) "开始／继续本地转写" else "选择 SenseVoice INT8 模型目录"
+    override fun onStart() {
+        super.onStart()
+        if (isFinishing) return
+        visible = true
+        player.resumeUpdates()
+        TranscriptionJob.listeners.add(changed)
+        syncState.registerOnSharedPreferenceChangeListener(syncListener)
+        load()
     }
-    private fun start() {
-        cancelled = false; busy = true; action.text = "暂停转写"
-        status.text = "正在本机加载模型…"
-        worker.execute {
-            try {
-                val transcript = LocalTranscription(applicationContext, file)
-                val audioHash = transcript.data.optString("sha256")
-                try { transcript.run({ cancelled }) { window -> ui {
-                    if (window.count == shownWindows + 1) {
-                        addWindow(window.startMs.toInt(), window.text, audioHash, animate = visible)
-                    }
-                    status.text = "已保存 ${window.count} 个时间区间"
-                } } }
-                catch (_: CancellationException) { /* Committed windows are resumable. */ }
-                ui { ready(); display(transcript); action.isEnabled = !transcript.data.optBoolean("complete") }
-            } catch (e: Exception) { ui { ready(); status.text = "转写失败：" + e.message } }
-            catch (e: LinkageError) { ui { ready(); status.text = "此设备无法加载识别运行库" } }
-        }
+    override fun onStop() {
+        TranscriptionJob.listeners.remove(changed)
+        syncState.unregisterOnSharedPreferenceChangeListener(syncListener)
+        visible = false
+        if (::player.isInitialized) player.suspendUpdates()
+        super.onStop()
     }
-    private fun display(transcript: LocalTranscription) {
-        val windows = transcript.data.getJSONArray("windows")
-        val audioHash = transcript.data.optString("sha256")
-        for (i in shownWindows until windows.length()) {
-            val w = windows.getJSONObject(i)
-            addWindow(w.getInt("start_ms"), w.getString("text"), audioHash, animate = false)
-        }
-        status.text = when {
-            transcript.data.optBoolean("complete") -> if (rows.childCount == 0) "已完成，未识别出文字" else "已完成，点文字回听"
-            windows.length() > 0 -> "已保存 ${windows.length()} 个区间，可继续"
-            else -> file.name
-        }
+    override fun onDestroy() {
+        io.shutdownNow()
+        if (::player.isInitialized) player.release()
+        super.onDestroy()
     }
-    private fun addWindow(start: Int, text: String, audioHash: String, animate: Boolean) {
-        shownWindows++
-        if (text.isBlank()) return
-        typing?.end()
-        val span = timeline?.spans?.find { it.file == file.name && it.hash == audioHash }
-        val recordedAt = span?.let { timeline?.timeAt(it.file, start.toLong()) }
-        val clock = recordedAt?.let { DateFormat.getTimeInstance(DateFormat.MEDIUM).format(java.util.Date(it)) + "　" }.orEmpty()
-        val prefix = clock + "%d:%02d　".format(start / 60000, start / 1000 % 60)
-        val contextText = span?.contextAt(start)?.let { "\n" + it.description() }.orEmpty()
-        val label = prefix + text + contextText
-        val row = Button(this).apply {
-            this.text = label
-            contentDescription = label
-            setOnClickListener { player.play(file, start, span) }
-        }
-        rows.addView(row)
-        val accessibility = getSystemService(Context.ACCESSIBILITY_SERVICE) as AccessibilityManager
-        if (!animate || !ValueAnimator.areAnimatorsEnabled() || accessibility.isTouchExplorationEnabled) return
+    override fun onSaveInstanceState(state: Bundle) {
+        super.onSaveInstanceState(state)
+        if (::search.isInitialized) state.putString("query", search.text.toString())
+    }
 
-        val iterator = BreakIterator.getCharacterInstance().apply { setText(text) }
-        val boundaries = mutableListOf(iterator.first())
-        var end = iterator.next()
-        while (end != BreakIterator.DONE) {
-            boundaries.add(end)
-            end = iterator.next()
-        }
-        row.text = prefix + contextText
-        var displayed = 0
-        typing = ValueAnimator.ofInt(0, boundaries.lastIndex).apply {
-            duration = (boundaries.lastIndex * 40L).coerceAtMost(2400L)
-            interpolator = LinearInterpolator()
-            addUpdateListener {
-                val count = it.animatedValue as Int
-                if (count != displayed) {
-                    row.text = prefix + text.substring(0, boundaries[count]) + contextText
-                    displayed = count
+    private fun load(changedFile: File? = null) {
+        io.execute {
+            try {
+                val directory = if (target.isDirectory) target else target.parentFile!!
+                val session = if (changedFile == null) {
+                    AudioSession.load(directory, target.takeUnless { it == directory }).also { catalog = it }
+                } else catalog ?: return@execute
+                val changedHash = session.clips.firstOrNull { it.file == changedFile }?.hash
+                val selected = session.clips.filter { (target == directory || it.file == target) &&
+                    (changedFile == null || it.hash == changedHash) }
+                val result = selected.associate { clip -> clip.file to try { readPage(clip) }
+                    catch (e: Exception) { Page(false, emptyList(), "${clip.file.name} · ${e.localizedMessage}") } }
+                val summary = if (changedFile == null) describe(session) else null
+                ui {
+                    val previousSize = pages[changedFile]?.lines?.size ?: 0
+                    val redraw = changedFile == null || result.any { (file, page) -> pages[file]?.lines != page.lines }
+                    if (changedFile == null) pages.clear()
+                    pages.putAll(result)
+                    if (changedFile != null) animate = pages[changedFile]?.lines?.takeIf { it.size > previousSize }?.lastOrNull()
+                    if (summary != null) info.text = summary
+                    ready = true
+                    if (redraw) filter()
+                    controls()
                 }
-            }
-            start()
+            } catch (e: Exception) { ui { status.text = "无法读取文字稿 · ${e.localizedMessage}" } }
         }
+    }
+    private fun readPage(clip: SessionClip): Page {
+        val checkpoint = LocalTranscription(this, clip)
+        val data = checkpoint.snapshot()
+        val edits = checkpoint.corrections()
+        val windows = data.getJSONArray("windows")
+        val clock = DateFormat.getTimeInstance(DateFormat.MEDIUM)
+        val lines = buildList {
+            for (i in 0 until windows.length()) {
+                val row = windows.getJSONObject(i)
+                val start = row.getInt("start_ms")
+                val text = row.getString("text")
+                val edit = if (edits.has(start.toString())) edits.getString(start.toString()) else null
+                if (text.isBlank() && edit == null) continue
+                val span = clip.span?.takeUnless { clip.hashMismatch }
+                val wall = span?.let { clip.run?.timeAt(it.file, start.toLong()) }
+                val prefix = (wall?.let { clock.format(Date(it)) + "　" }.orEmpty()) +
+                    "${clip.file.name}　${duration(start / 1000L)}\n"
+                val context = span?.contextAt(start)?.description()?.let { "\n$it" }.orEmpty()
+                add(Line(clip, start, text, edit, prefix, context))
+            }
+        }
+        return Page(data.optBoolean("complete"), lines)
+    }
+    private fun describe(session: AudioSession): String {
+        if (!target.isDirectory) return target.name
+        val runs = session.runs
+        val clock = DateFormat.getDateTimeInstance(DateFormat.SHORT, DateFormat.MEDIUM)
+        val sync = session.catalog?.let {
+            "手表清单（${clock.format(Date(it.observedMs))}）已同步 ${session.received}/${it.hashes.size} 段"
+        } ?: "本机 ${session.clips.size} 段，手表清单总数未知"
+        if (runs.isEmpty()) {
+            val why = if (session.timelineError) "时间轴读取失败" else "没有时间轴"
+            return "${target.name}\n$sync\n$why，录制起止、静音省略和缺口未知"
+        }
+        val start = clock.format(Date(runs.first().wallMs))
+        val end = runs.last().endWallMs?.let { clock.format(Date(it)) } ?: "结束时刻未知"
+        val unknown = session.uncoveredUs?.let(::audioDuration) ?: "未知"
+        val local = "本机 ${session.clips.size} 段，时间轴与哈希匹配 ${session.mapped.size} 段"
+        val coverage = "已匹配音频约 ${audioDuration(session.mappedUs)} · 已知省略 ${audioDuration(session.omittedUs)}"
+        val missing = if (session.missing > 0) " · 快照中另有 ${session.missing} 段缺文件" else ""
+        val errors = runs.count { it.endEvent == "error" }
+        val mismatches = session.clips.count { it.hashMismatch }
+        return listOf("$start 至 $end · ${runs.size} 轮", sync, local + missing, coverage,
+            "采集轮次内未覆盖　$unknown" + (if (errors > 0) " · 录制错误 ${errors} 轮" else "") +
+                (if (mismatches > 0) " · $mismatches 段校验失败" else "")).joinToString("\n")
+    }
+    private fun duration(seconds: Long) = "%d:%02d:%02d".format(seconds / 3600, seconds / 60 % 60, seconds % 60)
+    private fun audioDuration(us: Long) = if (us in 1..999_999) "不足 1 秒" else duration(us / 1_000_000)
+
+    private fun filter() {
+        val term = search.text.toString().trim()
+        shown = pages.values.flatMap { it.lines }.filter { it.text.contains(term, ignoreCase = true) }
+        adapter.notifyDataSetChanged()
+    }
+    private fun controls() {
+        val active = TranscriptionJob.active(this)
+        val mine = active == target.path
+        val complete = pages.isNotEmpty() && pages.values.all { it.complete }
+        val model = AsrModel.directory(this).isDirectory
+        action.text = when {
+            mine -> "暂停转写"
+            active != null -> "其他录音正在转写"
+            complete -> "已完成转写"
+            !model -> "导入 SenseVoice 模型"
+            target.isDirectory -> "开始／继续整场转写"
+            else -> "开始／继续本段转写"
+        }
+        action.isEnabled = !importing && (mine || (active == null && ready && pages.isNotEmpty() && !complete))
+        val last = TranscriptionJob.status(this, target.path)
+        val detail = if (!mine && (last.startsWith("正在转写") || last == "等待系统调度" || last.startsWith("系统暂缓")))
+            "任务已中断，可继续转写" else last
+        status.text = listOfNotNull(detail.takeIf { it.isNotEmpty() },
+            pages.values.firstNotNullOfOrNull { it.error }?.let { "读取失败 · $it" },
+            if (ready) "已转写 ${pages.values.count { it.complete }}/${pages.size} 段 · 点文字回听，长按校订" else "正在读取录音…").joinToString("\n")
+    }
+    private fun toggle() {
+        try {
+            if (TranscriptionJob.active(this) == target.path) TranscriptionJob.pause(this, target)
+            else if (AsrModel.directory(this).isDirectory) TranscriptionJob.start(this, target)
+            else startActivityForResult(Intent(Intent.ACTION_OPEN_DOCUMENT_TREE), 1)
+        } catch (e: Exception) { status.text = e.localizedMessage }
     }
     @Deprecated("Uses platform document picker")
     override fun onActivityResult(request: Int, result: Int, data: Intent?) {
         super.onActivityResult(request, result, data)
-        if (request != 1 || result != RESULT_OK) return
+        if (request != 1 || result != RESULT_OK) {
+            return
+        }
         val tree = data?.data ?: return
-        action.isEnabled = false; status.text = "正在校验并导入模型…"
-        worker.execute {
-            try { AsrModel.import(applicationContext, tree); ui { ready(); status.text = "模型已就绪" } }
-            catch (e: Exception) { ui { ready(); status.text = "导入失败：" + e.message } }
+        importing = true
+        controls()
+        io.execute {
+            val resultText = runCatching { AsrModel.import(this, tree); "模型已就绪" }.getOrElse { "导入失败 · ${it.message}" }
+            ui { importing = false; controls(); status.text = resultText }
+        }
+    }
+    private fun play(line: Line) {
+        io.execute {
+            val valid = runCatching { !line.clip.hashMismatch && line.clip.file.sha256() == line.clip.hash }.getOrDefault(false)
+            ui {
+                if (valid) player.play(line.clip.file, line.start, line.clip.span)
+                else status.text = "原音缺失或校验失败，请重新同步"
+            }
+        }
+    }
+    private fun edit(line: Line) {
+        val input = EditText(this).apply { setText(line.text) }
+        fun save(replacement: String?) {
+            io.execute {
+                val outcome = runCatching { LocalTranscription(this, line.clip).correct(line.start, replacement) }
+                ui { outcome.onSuccess { load(line.clip.file) }.onFailure { status.text = "保存校订失败 · ${it.localizedMessage}" } }
+            }
+        }
+        AlertDialog.Builder(this).setTitle("校订文字").setMessage("识别原文　" + line.original).setView(input)
+            .setPositiveButton("保存") { _, _ -> save(input.text.toString()) }
+            .setNeutralButton("恢复识别原文") { _, _ -> save(null) }.setNegativeButton("取消", null).show()
+    }
+
+    private inner class Lines : BaseAdapter() {
+        override fun getCount() = shown.size
+        override fun getItem(position: Int) = shown[position]
+        override fun getItemId(position: Int) = position.toLong()
+        override fun getView(position: Int, convertView: View?, parent: ViewGroup): View {
+            val row = (convertView as? TextView) ?: TextView(this@TranscriptionActivity).apply {
+                textSize = 16f
+                val pad = (12 * resources.displayMetrics.density).toInt()
+                setPadding(pad, pad, pad, pad)
+            }
+            (row.tag as? ValueAnimator)?.cancel()
+            val line = shown[position]
+            row.text = line.label(line.text)
+            row.contentDescription = row.text
+            if (line === animate && visible) {
+                animate = null
+                if (ValueAnimator.areAnimatorsEnabled() && !getSystemService(AccessibilityManager::class.java).isTouchExplorationEnabled) {
+                    val breaks = BreakIterator.getCharacterInstance().apply { setText(line.text) }
+                    val ends = generateSequence(breaks.first()) { breaks.next().takeUnless { it == BreakIterator.DONE } }.toList()
+                    row.tag = ValueAnimator.ofInt(0, ends.lastIndex).apply {
+                        duration = (ends.lastIndex * 40L).coerceAtMost(2400L)
+                        addUpdateListener { row.text = line.label(line.text.substring(0, ends[it.animatedValue as Int])) }
+                        start()
+                    }
+                }
+            }
+            return row
         }
     }
     private fun ui(block: () -> Unit) = runOnUiThread { if (!isDestroyed && !isFinishing) block() }
-    override fun onStart() { super.onStart(); visible = true }
-    override fun onStop() { visible = false; typing?.end(); typing = null; super.onStop() }
-    override fun onDestroy() { cancelled = true; if (::player.isInitialized) player.release(); super.onDestroy() }
-    companion object { private val worker = Executors.newSingleThreadExecutor() }
 }

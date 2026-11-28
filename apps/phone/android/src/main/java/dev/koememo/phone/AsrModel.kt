@@ -14,7 +14,7 @@ internal object AsrModel {
         "tokens.txt" to "f449eb28dc567533d7fa59be34e2abca8784f771850c78a47fb731a31429a1dc"
     )
     fun directory(context: Context) = File(context.filesDir, ID)
-    fun import(context: Context, tree: Uri) {
+    @Synchronized fun import(context: Context, tree: Uri) {
         val destination = directory(context)
         if (destination.isDirectory) return
         val stage = File(context.filesDir, "$ID.import")

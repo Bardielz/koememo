@@ -233,6 +233,11 @@ class SyncService : Service() {
                 progress.advanced(0)
                 PendingSegment(index, item, nodeDirectory, acknowledged)
             }.sortedBy { it.priority }
+            val observedMs = System.currentTimeMillis()
+            entries.map { it.item }.groupBy { it.session }.forEach { (id, segments) ->
+                try { SyncCatalog.save(File(nodeDirectory, id), segments, observedMs) }
+                catch (e: IOException) { Log.w("KoeMemoSync", "无法保存本次清单", e) }
+            }
             Log.i("KoeMemoSync", "session=$session receipts=$withReceipts first=${entries.firstOrNull()?.item?.name}")
             var lastRequest = android.os.SystemClock.elapsedRealtime()
             var reused = 0
