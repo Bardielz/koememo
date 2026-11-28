@@ -37,10 +37,10 @@ internal class SpeakerProfiles(val voices: MutableList<FloatArray>) {
     }
 }
 
-internal class SpeakerStore(context: Context, directory: File) {
+internal class SpeakerStore(context: Context, directory: File, method: SpeakerMethod = SpeakerMethod.DEFAULT) {
     private val root = File(context.filesDir, "audio").canonicalFile.toPath()
     private val path = directory.canonicalFile.toPath().also { require(it != root && it.startsWith(root)) }
-    private val folder = File(File(context.filesDir, "speaker-sessions-v1"), root.relativize(path).toString())
+    private val folder = File(File(context.filesDir, method.storeRoot), root.relativize(path).toString())
     private val report = AtomicFile(File(folder, "analysis.json"))
     private val aliases = AtomicFile(File(folder, "names.json"))
 

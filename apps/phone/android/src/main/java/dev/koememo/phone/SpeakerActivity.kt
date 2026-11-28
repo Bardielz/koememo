@@ -17,6 +17,7 @@ class SpeakerActivity : AppCompatActivity() {
     private val stop = AtomicBoolean()
     private lateinit var directory: File
     private lateinit var store: SpeakerStore
+    private lateinit var method: SpeakerMethod
     private lateinit var action: Button
     private lateinit var status: TextView
     private lateinit var rows: LinearLayout
@@ -28,17 +29,20 @@ class SpeakerActivity : AppCompatActivity() {
         super.onCreate(state)
         directory = File(intent.getStringExtra("directory").orEmpty()).canonicalFile
         if (!directory.isDirectory || !directory.toPath().startsWith(File(filesDir, "audio").canonicalFile.toPath())) { finish(); return }
-        store = SpeakerStore(this, directory)
+        method = SpeakerMethod.forFamily(AsrChoice.from(intent.getStringExtra("engine")).family)
+        store = SpeakerStore(this, directory, method)
         val layout = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
         layout.setOnApplyWindowInsetsListener { view, insets ->
             val safe = insets.getInsets(android.view.WindowInsets.Type.systemBars() or android.view.WindowInsets.Type.ime())
             view.setPadding(safe.left, safe.top, safe.right, safe.bottom); insets
         }
-        layout.addView(navigationBar("本次录音的发言人", true).apply { subtitle = sessionTitle(directory) })
+        layout.addView(navigationBar("本次录音的发言人", true).apply {
+            subtitle = if (method == SpeakerMethod.FUN) "Fun-ASR · ${sessionTitle(directory)}" else sessionTitle(directory)
+        })
         action = MaterialButton(this).apply { isEnabled = false; setOnClickListener {
             when {
                 analyzing -> { stop.set(true); isEnabled = false; status.text = "正在暂停…" }
-                SpeakerModel.directory(this@SpeakerActivity).isDirectory -> analyze()
+                method.directory(this@SpeakerActivity).isDirectory -> analyze()
                 else -> startActivityForResult(Intent(Intent.ACTION_OPEN_DOCUMENT_TREE), 1)
             }
         } }
@@ -67,13 +71,15 @@ class SpeakerActivity : AppCompatActivity() {
                     examples[turn.id] = Example(turn.id, clip, turn.start, SpeakerStore.display(turn.id, names))
                 }
             }
-            val model = SpeakerModel.directory(this).isDirectory
+            val model = method.directory(this).isDirectory
             ui {
                 status.text = listOf(note, when {
                     clips.isEmpty() -> "等待音频同步"
                     done == clips.size && examples.isEmpty() -> "未能区分出发言人"
                     done > 0 -> "已分析 ${100L * done / clips.size}% · 区分出 ${examples.size} 位发言人"
+                    model && method == SpeakerMethod.FUN -> "使用 FSMN-VAD 和 CAM++ 分析。短对话可能归为同一人，可回听核对。"
                     model -> "仅分析本次录音，结果保存在手机。退出此页会暂停，已完成的音频可以接着用。"
+                    method == SpeakerMethod.FUN -> "请选择包含 FSMN-VAD 和 CAM++ 两个模型文件的文件夹。"
                     else -> "选择包含分人模型与声音特征模型的文件夹。"
                 }).filter(String::isNotBlank).joinToString("\n")
                 action.text = when {
@@ -100,7 +106,7 @@ class SpeakerActivity : AppCompatActivity() {
                 val data = store.analysis()
                 val clips = AudioSession.load(directory).clips
                 var firstError: String? = null
-                SpeakerAnalysis(SpeakerModel.directory(this)).use { engine ->
+                method.open(this).use { engine ->
                     for ((i, clip) in clips.withIndex()) {
                         if (stop.get()) throw CancellationException()
                         if (SpeakerStore.turns(data, clip) != null) continue
@@ -159,7 +165,7 @@ class SpeakerActivity : AppCompatActivity() {
         action.isEnabled = false
         status.text = "正在校验模型…"
         io.execute {
-            val message = runCatching { importModel(this, tree, SpeakerModel.ID, SpeakerModel.files); "模型已就绪" }
+            val message = runCatching { importModel(this, tree, method.modelId, method.weights); "模型已就绪" }
                 .getOrElse { "导入失败 · ${it.localizedMessage}" }
             refresh(message)
         }

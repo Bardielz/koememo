@@ -24,20 +24,29 @@
 
 两类 GGUF 模型使用随 APK 安装的 ARM64 Snapdragon 运行库。音频编码器在 CPU 上运行，所选处理器承担语言解码。Fun-ASR 的 Adreno 路径使用 14 个解码层，其余层在 CPU 上运行。一加 12 的对照中，全层 Adreno 卸载曾将清晰语音识别成重复标点。应用会检查所选加速器的层分配，初始化失败时显示错误，可手动改选 CPU。一次任务复用已加载的权重，每个 15 秒音频窗口独立解码。
 
-模型和处理器在任务开始时固定。各组合各自保存文字、校订与进度，切回 SenseVoice 可继续使用原有结果。发言人名称在同一会话内共用。
+模型和处理器在任务开始时固定。各组合各自保存文字、校订与进度，切回 SenseVoice 可继续使用原有结果。同一会话中，使用相同分人模型的处理器组合共用发言人编号和名称。
 
 构建手机 APK 需要 Python 3、Git 和 Android NDK r27c（`sdkmanager 'ndk;27.2.12479018'`）。首次构建会获取固定版本的 [Fun-ASR 源码](https://github.com/QwenAudio/Fun-ASR/tree/5df2b86c73d19fb9afca24411e4a052d9113e619/runtime/llama.cpp) 和 [llama.cpp Snapdragon 运行库](https://github.com/ggml-org/llama.cpp/releases/tag/b12830)，校验后缓存在 Gradle 用户目录。模型权重另行导入。
 
 ## 区分发言人
 
-打开一次录音 →「文字稿」→「发言人」。首次使用时，把以下两个文件放在同一文件夹，点「导入发言人模型」。模型单独导入，应用校验 SHA-256。
+打开一次录音 →「文字稿」，选定转写模型后点「发言人」。首次使用时，把对应的两个文件放在同一文件夹，点「导入发言人模型」。应用校验 SHA-256。
+
+**Fun-ASR-Nano** 使用官方 FSMN-VAD 划出语音区间，CAM++ 按 1.5 秒窗口、0.75 秒步长提取声音特征。手机在本地做谱聚类，再把同一会话中匹配的声音关联到已有编号。发言人分析在 CPU 上运行，文字转写仍可选 CPU、GPU 或 NPU。按上游短音频规则，一批少于 20 个有效声纹窗口时会归为一人，短对话可能漏掉换人。[Fun-ASR 官方组合示例](https://github.com/QwenAudio/Fun-ASR#speaker-diarization) · [FunASR 聚类实现](https://github.com/modelscope/FunASR/blob/main/funasr/models/campplus/cluster_backend.py)
+
+- 下载 [fsmn-vad.gguf](https://huggingface.co/FunAudioLLM/fsmn-vad-GGUF/blob/6840bae4c5c92ee8c04faaf4db23dd0105098d7f/fsmn-vad.gguf)。
+- 下载 [3dspeaker_speech_campplus_sv_zh-cn_16k-common.onnx](https://github.com/k2-fsa/sherpa-onnx/releases/download/speaker-recongition-models/3dspeaker_speech_campplus_sv_zh-cn_16k-common.onnx)。
+
+**SenseVoice 和 Qwen** 共用以下模型及同一会话下的既有分人结果和手动名称。
 
 - 从 `sherpa-onnx-pyannote-segmentation-3-0.tar.bz2` 解压 `model.int8.onnx`。[分段模型](https://github.com/k2-fsa/sherpa-onnx/releases/tag/speaker-segmentation-models)
 - 下载 `3dspeaker_speech_eres2net_base_sv_zh-cn_3dspeaker_16k.onnx`。[声音特征模型](https://github.com/k2-fsa/sherpa-onnx/releases/tag/speaker-recongition-models)
 
 点「区分本次发言人」后，手机在本地分析已收到的原音。可暂停，返回此页后可从已保存的音频继续。分析和转写可以分别进行。点发言人旁的「回听」核对，点「命名」设置本次录音内的名字。返回文字稿即可看到标签。清空名字恢复匿名编号。
 
-手机按最多 60 秒一批分析 16 kHz 单声道音频，通过干净的发言区间比较声音特征，在同一会话内沿用编号。噪声、轮次过短、重叠或声学环境变化可能使一个人被拆为多人，或不同人被归到同组。目前文字以约 15 秒为一窗，同窗有两种声音时列出两者；词级归属和真实腕录上的分人错误率仍待验证。
+手机按最多 60 秒一批分析 16 kHz 单声道音频，在同一会话内匹配编号。Fun-ASR 使用聚类后的声音特征中心，pyannote 路线使用单人发言区间的声音特征。噪声、轮次过短、重叠或声学环境变化可能使一个人被拆为多人，或不同人被归到同组。文字按约 15 秒一窗显示，多人同窗会列出所有发言人。词级归属和真实腕录上的分人错误率仍待验证。
+
+一加 12 的 Fun-ASR 自测将两位说话人各自的五条不同录音交替拼接。十条录音的中点均标到了对应的同一人，静音样本没有生成发言区间。另一次将同一段双人英语录音原样循环三遍的测试产生了九个编号，重复音频可能造成过度分人。[公开语音样本](https://github.com/k2-fsa/sherpa-onnx/releases/tag/speaker-recongition-models)
 
 ## 录音上下文
 

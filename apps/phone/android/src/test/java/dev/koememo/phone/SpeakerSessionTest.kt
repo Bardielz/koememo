@@ -5,6 +5,21 @@ import org.junit.Assert.*
 import org.junit.Test
 
 class SpeakerSessionTest {
+    @Test fun funAsrUsesItsOwnResultsAcrossProcessors() {
+        for (processor in AsrProcessor.entries) {
+            val choice = AsrChoice.from(AsrChoice(AsrFamily.FUN, processor).key)
+            assertEquals(SpeakerMethod.FUN, SpeakerMethod.forFamily(choice.family))
+        }
+        assertEquals(SpeakerMethod.DEFAULT, SpeakerMethod.forFamily(AsrFamily.QWEN))
+        assertEquals("speaker-sessions-v1", SpeakerMethod.DEFAULT.storeRoot)
+        assertNotEquals(SpeakerMethod.DEFAULT.storeRoot, SpeakerMethod.FUN.storeRoot)
+        assertTrue(funSpeakerClusters(emptyList()).isEmpty())
+        val voices = List(32) { i -> if (i % 2 == 0) floatArrayOf(1f, 0f) else floatArrayOf(0f, 1f) }
+        assertEquals(1, funSpeakerClusters(voices.take(19)).distinct().size)
+        val labels = funSpeakerClusters(voices)
+        assertNotEquals(labels[0], labels[1])
+        assertTrue(labels.indices.all { labels[it] == labels[it % 2] })
+    }
     @Test fun localIdsCanSwapWithoutChangingSessionIdentity() {
         val profiles = SpeakerProfiles(mutableListOf())
         val a = floatArrayOf(1f, 0f)

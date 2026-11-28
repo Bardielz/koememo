@@ -76,6 +76,9 @@ def build(ndk, output, cache):
         subprocess.run([compiler, "-std=c++17", "-O2", "-static-libstdc++", "-I", work, src / "transcribe.cpp",
                         "-L", lib, "-Wl,-rpath,$ORIGIN", "-Wl,-z,max-page-size=16384", "-lllama", "-lmtmd",
                         "-lggml", "-lggml-base", "-lggml-cpu", "-ldl", "-llog", "-o", lib / "libkoe_asr.so"], check=True)
+        subprocess.run([compiler, "-std=c++17", "-O2", "-shared", "-fPIC", "-static-libstdc++", "-I", work,
+                        src / "fun_vad.cpp", "-L", lib, "-Wl,-z,max-page-size=16384", "-lggml-base",
+                        "-lggml-cpu", "-o", lib / "libkoe_fun_vad.so"], check=True)
         for file in lib.glob("*.so"):
             if not file.name.startswith("libggml-htp-"):
                 subprocess.run([tools / ("llvm-strip.exe" if os.name == "nt" else "llvm-strip"), "--strip-unneeded", file], check=True)

@@ -32,7 +32,6 @@ class TranscriptionActivity : AppCompatActivity() {
     private lateinit var player: RecordingPlayer
     private val io = Executors.newSingleThreadExecutor()
     private var catalog: AudioSession? = null // Owned by io.
-    private lateinit var speakers: SpeakerStore
     private lateinit var speakerData: JSONObject
     private lateinit var speakerNames: JSONObject
     private var ready = false
@@ -65,7 +64,6 @@ class TranscriptionActivity : AppCompatActivity() {
         if (directory == null || directory == root || !directory.toPath().startsWith(root.toPath()) ||
             !(target.isDirectory || target.isAudioSegment())) { finish(); return }
         choice = TranscriptionJob.choice(this, target) ?: AsrChoice.from(modelSettings.getString("selected", null))
-        speakers = SpeakerStore(this, directory)
         val layout = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; isFocusableInTouchMode = true }
         layout.setOnApplyWindowInsetsListener { view, insets ->
             val safe = insets.getInsets(android.view.WindowInsets.Type.systemBars() or android.view.WindowInsets.Type.ime())
@@ -75,7 +73,8 @@ class TranscriptionActivity : AppCompatActivity() {
             subtitle = if (target.isDirectory) sessionTitle(target) else target.name
             if (target.isDirectory) action("发言人", true) {
                 player.pauseForNavigation()
-                startActivity(Intent(this@TranscriptionActivity, SpeakerActivity::class.java).putExtra("directory", directory.path))
+                startActivity(Intent(this@TranscriptionActivity, SpeakerActivity::class.java)
+                    .putExtra("directory", directory.path).putExtra("engine", choice.key))
             }
         })
         modelAction = MaterialButton(this, null, androidx.appcompat.R.attr.borderlessButtonStyle).apply {
@@ -136,6 +135,7 @@ class TranscriptionActivity : AppCompatActivity() {
             try {
                 val directory = if (target.isDirectory) target else target.parentFile!!
                 val session = if (changedFile == null) {
+                    val speakers = SpeakerStore(this, directory, SpeakerMethod.forFamily(selectedModel.family))
                     speakerData = speakers.analysis()
                     speakerNames = speakers.names()
                     AudioSession.load(directory, target.takeUnless { it == directory }).also { catalog = it }
