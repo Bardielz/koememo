@@ -1,0 +1,5 @@
+<resources>
+    <style name="PhoneTheme" parent="Theme.Material3Expressive.DynamicColors.DayNight.NoActionBar">
+        <item name="android:windowBackground">?attr/colorSurface</item>
+    </style>
+</resources>

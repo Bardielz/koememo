@@ -14,28 +14,30 @@ internal object AsrModel {
         "tokens.txt" to "f449eb28dc567533d7fa59be34e2abca8784f771850c78a47fb731a31429a1dc"
     )
     fun directory(context: Context) = File(context.filesDir, ID)
-    fun import(context: Context, tree: Uri) {
-        val destination = directory(context)
-        if (destination.isDirectory) return
-        val stage = File(context.filesDir, "$ID.import")
-        stage.deleteRecursively()
-        check(stage.mkdir())
-        try {
-            val children = DocumentsContract.buildChildDocumentsUriUsingTree(tree, DocumentsContract.getTreeDocumentId(tree))
-            context.contentResolver.query(children, arrayOf(DocumentsContract.Document.COLUMN_DOCUMENT_ID, DocumentsContract.Document.COLUMN_DISPLAY_NAME), null, null, null)?.use { rows ->
-                while (rows.moveToNext()) {
-                    val name = rows.getString(1)
-                    val hash = files[name] ?: continue
-                    val uri = DocumentsContract.buildDocumentUriUsingTree(tree, rows.getString(0))
-                    val digest = MessageDigest.getInstance("SHA-256")
-                    val source = requireNotNull(context.contentResolver.openInputStream(uri))
-                    DigestInputStream(source, digest).use { input -> File(stage, name).outputStream().use { input.copyTo(it) } }
-                    check(digest.digest().hex() == hash) { "$name 校验失败" }
-                }
+    fun import(context: Context, tree: Uri) = importModel(context, tree, ID, files)
+}
+
+@Synchronized internal fun importModel(context: Context, tree: Uri, id: String, files: Map<String, String>) {
+    val destination = File(context.filesDir, id)
+    if (destination.isDirectory) return
+    val stage = File(context.filesDir, "$id.import")
+    stage.deleteRecursively()
+    check(stage.mkdir())
+    try {
+        val children = DocumentsContract.buildChildDocumentsUriUsingTree(tree, DocumentsContract.getTreeDocumentId(tree))
+        context.contentResolver.query(children, arrayOf(DocumentsContract.Document.COLUMN_DOCUMENT_ID, DocumentsContract.Document.COLUMN_DISPLAY_NAME), null, null, null)?.use { rows ->
+            while (rows.moveToNext()) {
+                val name = rows.getString(1)
+                val hash = files[name] ?: continue
+                val uri = DocumentsContract.buildDocumentUriUsingTree(tree, rows.getString(0))
+                val digest = MessageDigest.getInstance("SHA-256")
+                val source = requireNotNull(context.contentResolver.openInputStream(uri))
+                DigestInputStream(source, digest).use { input -> File(stage, name).outputStream().use { input.copyTo(it) } }
+                check(digest.digest().hex() == hash) { "$name 校验失败" }
             }
-            check(files.keys.all { File(stage, it).isFile }) { "请选择含 model.int8.onnx 和 tokens.txt 的模型目录" }
-            check(stage.renameTo(destination)) { "无法保存模型" }
-        } finally { stage.deleteRecursively() }
-    }
+        }
+        check(files.keys.all { File(stage, it).isFile }) { "请选择含 ${files.keys.joinToString("、")} 的目录" }
+        check(stage.renameTo(destination)) { "无法保存模型" }
+    } finally { stage.deleteRecursively() }
 }
 internal fun ByteArray.hex() = joinToString("") { "%02x".format(it) }

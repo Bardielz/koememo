@@ -2,13 +2,78 @@
 
 在仓库根目录执行 `apps/watch/wearos/gradlew -p apps/watch/wearos :phone:assembleDebug :app:assembleDebug`。phone-debug.apk 安装到安卓手机，app-debug.apk 安装到配对手表，两端需要相同 applicationId、签名与可用的 Google Play services。使用同一次构建生成的两个 APK。本分支保留 0.1.6-dev 的录音诊断，两个 APK 版本均为 0.1.7-dev。
 
-手机点击“从手表同步”。已关闭片段保存在手机应用私有目录。点击片段可播放或通过系统文件选择器导出。手机前台服务负责同步。返回桌面或重新打开页面可以继续当前任务。允许通知后也可从通知暂停。临时断线后，手机按 2、4、8 秒间隔重试，接着已有临时文件继续下载；主动暂停后需手动继续。手表保留源文件。第一版由用户在手机前台发起，支持一台可达手表。
+手机点击“从手表同步”。已关闭片段保存在手机应用私有目录。点一次录音即可进入回听页。手机前台服务负责同步。返回桌面或重新打开页面可以继续当前任务。允许通知后也可从通知暂停。临时断线后，手机按 2、4、8 秒间隔重试，接着已有临时文件继续下载；主动暂停后需手动继续。手表保留源文件。第一版由用户在手机前台发起，支持一台可达手表。
 
-点击已同步文件 → 本地转写。首次从[官方模型目录](https://huggingface.co/csukuangfj/sherpa-onnx-sense-voice-zh-en-ja-ko-yue-2024-07-17/tree/main)取得 `model.int8.onnx` 和 `tokens.txt`，放入手机同一文件夹后在应用内选择该目录。使用前请查看模型许可。应用校验两个文件的 SHA-256，将模型保存到私有目录。此后 CPU 离线识别，无需麦克风权限。每识别完约 15 秒音频，手机先保存该段全文和起止时间，再在前台页面逐字显示。重新打开会直接显示已保存的全文，暂停或进程中断后可手动继续。点时间区间回听。强制分窗可能切断词语，时间是片段内的播放位置。
+录音库按开始日期排列，可输入日期（例如 `11-20`）或名称查找。打开后点「播放这次录音」，手机会接着播放已收到且可用的原音。总时长已知时可拖动整场进度条；这个时间只累计可回听的音频。旧录音缺少完整时间轴时，跨录制轮次的先后顺序可能无法还原。点「文字稿」查找原话，返回可继续从刚才的位置播放。
+
+需要导出或单独处理文件时，从右上菜单进入「音频文件」。可按编号、时间或文件名筛选；有可靠映射时显示录制时间，旧录音显示存入时间。点文件右侧的更多按钮导出或查看本段文字稿。录音页可查看标记和运动与心率，右上菜单提供录制详情。上次手表清单记录了获取时间和当时已关闭的文件；分子是手机已收到且与该清单哈希匹配的数量。时间轴可以稍后到达。已匹配音频的时长来自编码时间戳，静音省略扣除恢复时补回的音频。采集轮次内的未覆盖时长按最终采样数减去省略区间与本地可定位音频计算；两次采集之间的暂停单独于此计算。缺少时间轴或最终采样数时显示未知。
+
+首次从[官方模型目录](https://huggingface.co/csukuangfj/sherpa-onnx-sense-voice-zh-en-ja-ko-yue-2024-07-17/tree/main)取得 `model.int8.onnx` 和 `tokens.txt`，放入同一文件夹后在应用内选择该目录。应用校验两个文件的 SHA-256，此后在手机 CPU 离线识别。点「开始／继续整场转写」处理任务执行时已经同步的片段，新到的片段可再次点按补齐。一次运行一个任务，复用同一模型。返回桌面、切换页面后可继续；系统可能延后或中断任务，允许执行时从已保存的约 15 秒窗口继续。手动暂停后由用户继续。安卓强行停止应用后需重新打开并手动继续。
+
+已保存的窗口可跨文件搜索，点文字从该窗口起点回听。长按文字可校订或恢复识别原文；校订绑定来源文件和内容哈希。固定窗可能切断词语，暂未提供逐词时间戳。模型缺失时可以查看已有结果和播放录音。音频和识别文字存放在手机应用私有目录。
+
+## 选择端侧转写模型
+
+打开一场录音的「文字稿」，点当前模型名，选择模型和处理器。首次使用时，点「导入模型」选择含下表两个文件的目录。应用核对 SHA-256 后将权重保存到私有目录。同一模型的三种处理器共享权重。
+
+| 模型 | 本地文件 | 手机后端 |
+| --- | --- | --- |
+| SenseVoice | `model.int8.onnx`、`tokens.txt` | CPU |
+| [Fun-ASR-Nano-2512](https://huggingface.co/FunAudioLLM/Fun-ASR-Nano-GGUF/tree/46e849502a867080d66d351b8dfb1018b607e509) | `funasr-encoder-f16.gguf`、`qwen3-0.6b-q8_0.gguf` | CPU、Adreno GPU、Hexagon NPU |
+| [Qwen3-ASR-0.6B](https://huggingface.co/ggml-org/Qwen3-ASR-0.6B-GGUF/tree/b98bf4381df3b400b929dcaff0dc83b6dafe221b) | `mmproj-Qwen3-ASR-0.6B-Q8_0.gguf`、`Qwen3-ASR-0.6B-Q8_0.gguf`，合计约 1.02 GB | CPU、Adreno GPU、Hexagon NPU |
+| [Qwen3-ASR-1.7B](https://huggingface.co/ggml-org/Qwen3-ASR-1.7B-GGUF/tree/3b2c29585c2180452ccb14d3b6b58127f352400d) | `mmproj-Qwen3-ASR-1.7B-Q8_0.gguf`、`Qwen3-ASR-1.7B-Q8_0.gguf` | CPU、Adreno GPU、Hexagon NPU |
+
+两类 GGUF 模型使用随 APK 安装的 ARM64 Snapdragon 运行库。音频编码器在 CPU 上运行，所选处理器承担语言解码。Fun-ASR 的 Adreno 路径使用 14 个解码层，其余层在 CPU 上运行。一加 12 的对照中，全层 Adreno 卸载曾将清晰语音识别成重复标点。应用会检查所选加速器的层分配，初始化失败时显示错误，可手动改选 CPU。一次任务复用已加载的权重，每个 15 秒音频窗口独立解码。
+
+模型和处理器在任务开始时固定。各组合各自保存文字、校订与进度，切回 SenseVoice 可继续使用原有结果。同一会话中，使用相同分人模型的处理器组合共用发言人编号和名称。
+
+构建手机 APK 需要 Python 3、Git 和 Android NDK r27c（`sdkmanager 'ndk;27.2.12479018'`）。首次构建会获取固定版本的 [Fun-ASR 源码](https://github.com/QwenAudio/Fun-ASR/tree/5df2b86c73d19fb9afca24411e4a052d9113e619/runtime/llama.cpp) 和 [llama.cpp Snapdragon 运行库](https://github.com/ggml-org/llama.cpp/releases/tag/b12830)，校验后缓存在 Gradle 用户目录。模型权重另行导入。
+
+## 区分发言人
+
+打开一次录音 →「文字稿」，选定转写模型后点「发言人」。首次使用时，把对应的两个文件放在同一文件夹，点「导入发言人模型」。应用校验 SHA-256。
+
+**Fun-ASR-Nano** 使用官方 FSMN-VAD 划出语音区间，CAM++ 按 1.5 秒窗口、0.75 秒步长提取声音特征。手机在本地做谱聚类，再把同一会话中匹配的声音关联到已有编号。发言人分析在 CPU 上运行，文字转写仍可选 CPU、GPU 或 NPU。按上游短音频规则，一批少于 20 个有效声纹窗口时会归为一人，短对话可能漏掉换人。[Fun-ASR 官方组合示例](https://github.com/QwenAudio/Fun-ASR#speaker-diarization) · [FunASR 聚类实现](https://github.com/modelscope/FunASR/blob/main/funasr/models/campplus/cluster_backend.py)
+
+- 下载 [fsmn-vad.gguf](https://huggingface.co/FunAudioLLM/fsmn-vad-GGUF/blob/6840bae4c5c92ee8c04faaf4db23dd0105098d7f/fsmn-vad.gguf)。
+- 下载 [3dspeaker_speech_campplus_sv_zh-cn_16k-common.onnx](https://github.com/k2-fsa/sherpa-onnx/releases/download/speaker-recongition-models/3dspeaker_speech_campplus_sv_zh-cn_16k-common.onnx)。
+
+**SenseVoice 和 Qwen** 共用以下模型及同一会话下的既有分人结果和手动名称。
+
+- 从 `sherpa-onnx-pyannote-segmentation-3-0.tar.bz2` 解压 `model.int8.onnx`。[分段模型](https://github.com/k2-fsa/sherpa-onnx/releases/tag/speaker-segmentation-models)
+- 下载 `3dspeaker_speech_eres2net_base_sv_zh-cn_3dspeaker_16k.onnx`。[声音特征模型](https://github.com/k2-fsa/sherpa-onnx/releases/tag/speaker-recongition-models)
+
+点「区分本次发言人」后，手机在本地分析已收到的原音。可暂停，返回此页后可从已保存的音频继续。分析和转写可以分别进行。点发言人旁的「回听」核对，点「命名」设置本次录音内的名字。返回文字稿即可看到标签。清空名字恢复匿名编号。
+
+手机按最多 60 秒一批分析 16 kHz 单声道音频，在同一会话内匹配编号。Fun-ASR 使用聚类后的声音特征中心，pyannote 路线使用单人发言区间的声音特征。噪声、轮次过短、重叠或声学环境变化可能使一个人被拆为多人，或不同人被归到同组。文字按约 15 秒一窗显示，多人同窗会列出所有发言人。词级归属和真实腕录上的分人错误率仍待验证。
+
+一加 12 的 Fun-ASR 自测将两位说话人各自的五条不同录音交替拼接。十条录音的中点均标到了对应的同一人，静音样本没有生成发言区间。另一次将同一段双人英语录音原样循环三遍的测试产生了九个编号，重复音频可能造成过度分人。[公开语音样本](https://github.com/k2-fsa/sherpa-onnx/releases/tag/speaker-recongition-models)
+
+## 文字稿阅读
+
+整场文字稿按发言人和停顿分段。能定位到同一人且相邻的原文会连起来。换人、至少两秒的可观测停顿、时间不连续和较长的完整句会另起一段。多人同窗显示全部已知名字。尚无词级时间时，每条原文保留采集窗口的归属精度。点文字可回听对应窗口，长按可校订。导航短线表示段落位置，默认在左侧。可在文字稿右上菜单的「段落导航位置」切换左侧或右侧，选择对后续录音生效。可点击或拖动，滚动文字时当前刻度同步变化。搜索文字或发言人会更新可跳转的范围，读屏与方向键也可操作段落导航。
+
+交互参考了 [BBC Transcript Editor](https://github.com/bbc/react-transcript-editor) 的时间定位编辑、[WhisperX](https://github.com/m-bain/whisperX/blob/main/whisperx/diarize.py) 的时间区间归属，以及 [AndroidFastScroll](https://github.com/zhanghai/AndroidFastScroll) 的拖动定位。手机端直接使用已有 Android 列表和会话时间轴。
+
+## 文字稿实验
+
+打开手机「实验功能」总开关，在整场文字稿的右上菜单进入「文字稿实验」。模型按需从本地目录导入，校验 SHA-256，使用随 APK 安装的 ARM64 CPU 运行库。实验处理打开页面时已保存的文字和人工校订。要纳入之后的转写或校订，重新进入页面。
+
+| 用途 | 从指定版本下载的文件 |
+| --- | --- |
+| Meeting Agent 中文 | [根目录 Q4_0 GGUF 和同目录的 system_prompt.txt](https://huggingface.co/Luigi/gemma-4-E2B-meeting-agent-zh/tree/bc219ef2c009075285d58fa0296ad6c0588a6b3f)，均放入同一个导入目录 |
+| Gemma 4 E2B 原版 | [gemma-4-E2B_q4_0-it.gguf](https://huggingface.co/google/gemma-4-E2B-it-qat-q4_0-gguf/tree/675cff42a74c774d6cb76f76d8eacb49b48c9b93) |
+| EmbeddingGemma 1 文字编码器 | [embeddinggemma-300M-Q8_0.gguf](https://huggingface.co/ggml-org/embeddinggemma-300M-GGUF/tree/0f741b5a6585bd53aeb15cd1372c56f2a0f65e12) |
+| EmbeddingGemma 2 文字编码器 | [embeddinggemma-2-Q8_0.gguf](https://huggingface.co/ggml-org/embeddinggemma-2-GGUF/tree/6ea3e3a309d12a4779cfda98b8c19800d2d5da71) |
+
+**比较两种纪要。** 选择同一文件内的一组文字，手机依次加载两种模型，用相同的原话、时间、发言人提示和贪心解码提取要点。页面分别保存两份输出和耗时。引用时间与输入匹配时可点回原音。输出格式或引用无效时展示原始输出供核查。时间匹配只证明可以定位，内容和责任人仍需回听确认。
+
+**建立检索索引。** 两代模型分别对整场已保存的文字窗口计算 768 维归一化向量，存入手机私有 SQLite。每条记录携带会话、转写引擎、模型指纹、文件名及音频哈希、窗口起止时间和有效文字哈希。同一模型重建时只计算有变化的窗口，完整写入后才替换旧索引。当前阅读页仍提供即时文字搜索。后续语义检索须用同一模型对查询加 `task: search result | query: ` 前缀编码，在该模型文档向量上按余弦相似度排序。二代本次接入文字编码，原音向量需要另行接入音频投影器。
+
 
 ## 录音上下文
 
-同步后点任一片段 →「录音上下文」，可以查看整个会话内可对齐的 15 秒窗口。点「按活动强度」会把手腕活动较强的窗口排在前面，点窗口回听。进度条拖动、会话标记和转写窗口都使用对应片段的播放偏移。每窗显示腕部活动强度、有效心率范围、有效与收到的心率样本数，以及缺少有效读数的秒格数。没有心率样本和有回调但全部无效分别显示。此功能需要两端支持上下文同步，且手表录音时已开启运动和心率实验。
+同步后进入会话，点「运动与心率」，可以查看整个会话内可对齐的 15 秒窗口。点「按活动强度」会把手腕活动较强的窗口排在前面，点窗口回听。进度条拖动、会话标记和转写窗口都使用对应片段的播放偏移。每窗显示腕部活动强度、有效心率范围、有效与收到的心率样本数，以及缺少有效读数的秒格数。没有心率样本和有回调但全部无效分别显示。此功能需要两端支持上下文同步，且手表录音时已开启运动和心率实验。
 
 ## 实机同步验证
 

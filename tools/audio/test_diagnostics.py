@@ -2,10 +2,29 @@ import json
 import tempfile
 import unittest
 from pathlib import Path
-from diagnostics import summarize
+from diagnostics import battery_runs, summarize
 
 
 class DiagnosticsTest(unittest.TestCase):
+    def test_battery_rate_needs_a_bounded_unplugged_run(self):
+        def observation(kind, when, level, plug):
+            return dict(event=kind, elapsed_ms=when, battery_percent=level, battery_plugged=plug)
+        events = []
+        for plug in (0, 4, None):
+            events.extend([observation('run_started', 10, 90, 0), dict(event='segment_closed'),
+                           observation('telemetry', 60010, 89, plug), observation('run_stopped', 3600010, 80, 0)])
+        events.append(observation('run_started', 4000000, 80, 0))
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / 'events.jsonl'
+            path.write_text('\n'.join(map(json.dumps, events)))
+            first, powered, unknown, unfinished = battery_runs(path)['runs']
+        self.assertEqual(first['device_percentage_points_per_hour'], 10)
+        self.assertEqual(first['closed_segments'], 1)
+        self.assertEqual(first['max_sample_gap_s'], 3540)
+        for run in (powered, unknown, unfinished):
+            self.assertNotIn('device_percentage_points_per_hour', run)
+        self.assertFalse(unfinished['complete'])
+
     def test_cumulative_reports_are_not_added_together(self):
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / 'events.jsonl'

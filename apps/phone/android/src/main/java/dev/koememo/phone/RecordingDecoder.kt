@@ -3,16 +3,22 @@ package dev.koememo.phone
 import android.media.*
 import android.os.SystemClock
 import dev.watchmemory.recording.infrastructure.opus.OpusPackets
+import dev.koememo.sync.sha256
 import java.io.File
 import java.nio.ByteOrder
 
 /** Decode one KoeMemo segment with bounded memory; timestamps use the saved media timeline. */
 internal object RecordingDecoder {
-    fun read(file: File, consume: (FloatArray, Int, Int) -> Unit) {
+    fun read(file: File, expectedHash: String, consume: (FloatArray, Int, Int) -> Unit) {
         val extractor = MediaExtractor()
         var decoder: MediaCodec? = null
         try {
-            extractor.setDataSource(file.path)
+            // Sync may atomically replace this path while a session is being transcribed.
+            file.inputStream().use { source ->
+                check(source.sha256() == expectedHash) { "音频已更换，请重试" }
+                source.channel.position(0)
+                extractor.setDataSource(source.fd)
+            }
             extractor.selectTrack(0)
             val format = extractor.getTrackFormat(0)
             val mime = requireNotNull(format.getString(MediaFormat.KEY_MIME))

@@ -34,15 +34,15 @@ fun copyExactly(input: InputStream, output: OutputStream, length: Long, progress
         progress(count)
     }
 }
-fun File.sha256(): String {
+fun File.sha256(): String = inputStream().use { it.sha256() }
+
+fun InputStream.sha256(): String {
     val digest = MessageDigest.getInstance("SHA-256")
-    inputStream().buffered().use { stream ->
-        val buf = ByteArray(32768)
-        while (true) {
-            val n = stream.read(buf)
-            if (n < 0) break
-            digest.update(buf, 0, n)
-        }
+    val buf = ByteArray(32768)
+    while (true) {
+        val n = read(buf)
+        if (n < 0) break
+        digest.update(buf, 0, n)
     }
     return digest.digest().joinToString("") { "%02x".format(it) }
 }
