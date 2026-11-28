@@ -20,6 +20,7 @@
 | --- | --- | --- |
 | SenseVoice | `model.int8.onnx`、`tokens.txt` | CPU |
 | [Fun-ASR-Nano-2512](https://huggingface.co/FunAudioLLM/Fun-ASR-Nano-GGUF/tree/46e849502a867080d66d351b8dfb1018b607e509) | `funasr-encoder-f16.gguf`、`qwen3-0.6b-q8_0.gguf` | CPU、Adreno GPU、Hexagon NPU |
+| [Qwen3-ASR-0.6B](https://huggingface.co/ggml-org/Qwen3-ASR-0.6B-GGUF/tree/b98bf4381df3b400b929dcaff0dc83b6dafe221b) | `mmproj-Qwen3-ASR-0.6B-Q8_0.gguf`、`Qwen3-ASR-0.6B-Q8_0.gguf`，合计约 1.02 GB | CPU、Adreno GPU、Hexagon NPU |
 | [Qwen3-ASR-1.7B](https://huggingface.co/ggml-org/Qwen3-ASR-1.7B-GGUF/tree/3b2c29585c2180452ccb14d3b6b58127f352400d) | `mmproj-Qwen3-ASR-1.7B-Q8_0.gguf`、`Qwen3-ASR-1.7B-Q8_0.gguf` | CPU、Adreno GPU、Hexagon NPU |
 
 两类 GGUF 模型使用随 APK 安装的 ARM64 Snapdragon 运行库。音频编码器在 CPU 上运行，所选处理器承担语言解码。Fun-ASR 的 Adreno 路径使用 14 个解码层，其余层在 CPU 上运行。一加 12 的对照中，全层 Adreno 卸载曾将清晰语音识别成重复标点。应用会检查所选加速器的层分配，初始化失败时显示错误，可手动改选 CPU。一次任务复用已加载的权重，每个 15 秒音频窗口独立解码。

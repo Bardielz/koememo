@@ -53,6 +53,8 @@ class ProcessorTranscriptionTest(private val engineKey: String) {
         assumeTrue(filter == null || filter == engineKey)
         val context = InstrumentationRegistry.getInstrumentation().targetContext
         val choice = AsrChoice.from(engineKey)
+        val model = args.getString("model")
+        assumeTrue(model == null || model == choice.family.modelId)
         val fixture = File(context.cacheDir, "asr-smoke.pcm")
         require(fixture.length() in 2..480000 && fixture.length() % 2 == 0L)
         val input = ByteBuffer.wrap(fixture.readBytes()).order(ByteOrder.LITTLE_ENDIAN).asShortBuffer()

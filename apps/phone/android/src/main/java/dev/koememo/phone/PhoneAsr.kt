@@ -14,6 +14,8 @@ internal enum class AsrFamily(val label: String, val modelId: String, val encode
     SENSE("SenseVoice", AsrModel.ID),
     FUN("Fun-ASR-Nano-2512", "fun-asr-nano-2512-q8", "funasr-encoder-f16.gguf", "qwen3-0.6b-q8_0.gguf",
         "f92f91d01a24fbed6c863495b2ee8c6a6788144a02858b75743f0946668de8a2", "819f385dc0e035dccc3d9e7edaf6b7b044b8ba7ace63cbcbf84c7e397eecbf27"),
+    QWEN_SMALL("Qwen3-ASR-0.6B", "qwen3-asr-0.6b-q8", "mmproj-Qwen3-ASR-0.6B-Q8_0.gguf", "Qwen3-ASR-0.6B-Q8_0.gguf",
+        "3b5e371a03e7d14bc1b5a66f38ff3c5eec3a99b3f96deb72b3814da9adafb16d", "05c9e10cecb37f6fc0cac0e786195dba82f12c15021f0b8a09473dbf3b6f090d"),
     QWEN("Qwen3-ASR-1.7B", "qwen3-asr-1.7b-q8", "mmproj-Qwen3-ASR-1.7B-Q8_0.gguf", "Qwen3-ASR-1.7B-Q8_0.gguf",
         "24eaf9a96fa94fe36ed0c1de68d44cccdb3f2229ee614e5b1b5bab951bc37883", "cd5f5ce9d7c9c03ff47d54d7f2726e63a39e61e3001640c5d08b6e4d3aed1e6d");
 
@@ -33,7 +35,7 @@ internal data class AsrChoice(val family: AsrFamily, val processor: AsrProcessor
     val label get() = family.label + " · " + processor.label
     companion object {
         val legacy = AsrChoice(AsrFamily.SENSE, AsrProcessor.CPU)
-        val choices = listOf(legacy) + listOf(AsrFamily.FUN, AsrFamily.QWEN).flatMap { family ->
+        val choices = listOf(legacy) + AsrFamily.entries.filter { it != AsrFamily.SENSE }.flatMap { family ->
             AsrProcessor.entries.map { AsrChoice(family, it) }
         }
         fun from(key: String?) = if (key == null) legacy else choices.first { it.key == key }
@@ -61,6 +63,11 @@ internal fun openRecognizer(context: Context, choice: AsrChoice): PhoneRecognize
 }
 
 private class NativeAsr(context: Context, private val choice: AsrChoice) : PhoneRecognizer {
+    private val workerModel = when (choice.family) {
+        AsrFamily.FUN -> "fun"
+        AsrFamily.QWEN_SMALL, AsrFamily.QWEN -> "qwen"
+        AsrFamily.SENSE -> error("SenseVoice uses the ONNX recognizer")
+    }
     private val process: Process
     private val reader: DataInputStream
     private val writer: DataOutputStream
@@ -71,7 +78,7 @@ private class NativeAsr(context: Context, private val choice: AsrChoice) : Phone
         check(binary.canExecute()) { "当前设备未安装 ARM64 识别运行库" }
         val family = choice.family
         val model = family.directory(context)
-        val builder = ProcessBuilder(binary.path, family.name.lowercase(), choice.processor.device,
+        val builder = ProcessBuilder(binary.path, workerModel, choice.processor.device,
             File(model, family.encoder).path, File(model, family.decoder).path)
         builder.directory(context.cacheDir)
         builder.environment()["LD_LIBRARY_PATH"] = lib.path + ":/vendor/lib64:/vendor/lib64/egl"
@@ -104,7 +111,7 @@ private class NativeAsr(context: Context, private val choice: AsrChoice) : Phone
         writer.write(pcm.array())
         writer.flush()
         val text = receive()
-        return (if (choice.family == AsrFamily.QWEN) text.substringAfter("<asr_text>") else text).trim()
+        return (if (workerModel == "qwen") text.substringAfter("<asr_text>") else text).trim()
     }
     override fun close() {
         runCatching { writer.close() }
